@@ -1,0 +1,10 @@
+/home/admin/sparkcan/build/CMakeFiles/sparkcan.dir
+/home/admin/sparkcan/build/CMakeFiles/example_control.dir
+/home/admin/sparkcan/build/CMakeFiles/example_pid.dir
+/home/admin/sparkcan/build/CMakeFiles/example_status.dir
+/home/admin/sparkcan/build/CMakeFiles/edit_cache.dir
+/home/admin/sparkcan/build/CMakeFiles/rebuild_cache.dir
+/home/admin/sparkcan/build/CMakeFiles/list_install_components.dir
+/home/admin/sparkcan/build/CMakeFiles/install.dir
+/home/admin/sparkcan/build/CMakeFiles/install/local.dir
+/home/admin/sparkcan/build/CMakeFiles/install/strip.dir

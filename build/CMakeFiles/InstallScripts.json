@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/admin/sparkcan/build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
