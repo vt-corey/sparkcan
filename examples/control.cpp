@@ -1,7 +1,6 @@
 #include <iostream>
 
 #include "SparkFlex.hpp"
-#include "SparkMax.hpp"
 
 /*
 This has been tested with the SPARK MAX while connected to an AndyMark 775 RedLine Motor and
@@ -11,27 +10,20 @@ with a Spark Flex connected to a NEO Vortex Brushless Motor.
 int main()
 {
   try {
-    // Initialize SparkMax object with CAN interface and CAN ID
-    SparkMax motor("can0", 1);
-    SparkFlex motor2("can0", 15);
-
-    // Configure and burn parameters for Redline
-    motor.SetIdleMode(IdleMode::kBrake);
-    motor.SetMotorType(MotorType::kBrushed);
-    motor.SetInverted(true);
-    motor.BurnFlash();
+    // Initialize SparkFlex object with CAN interface and CAN ID
+    SparkFlex motor("can0", 1);
 
     // Configure and burn parameters for NEO Vortex
-    motor2.SetIdleMode(IdleMode::kBrake);
-    motor2.SetMotorType(MotorType::kBrushless);
-    motor2.SetSensorType(SensorType::kHallSensor);
-    motor2.SetRampRate(0.1);
-    motor2.SetInverted(false);
-    motor2.SetMotorKv(565);
-    motor2.SetEncoderCountsPerRev(7168);
-    motor2.SetSmartCurrentFreeLimit(20.0);
-    motor2.SetSmartCurrentStallLimit(20.0);
-    motor2.BurnFlash();
+    motor.SetIdleMode(IdleMode::kBrake);
+    motor.SetMotorType(MotorType::kBrushless);
+    motor.SetSensorType(SensorType::kHallSensor);
+    motor.SetRampRate(0.1);
+    motor.SetInverted(false);
+    motor.SetMotorKv(565);
+    motor.SetEncoderCountsPerRev(7168);
+    motor.SetSmartCurrentFreeLimit(20.0);
+    motor.SetSmartCurrentStallLimit(20.0);
+    motor.BurnFlash();
 
     // Loop for 10 seconds
     auto start = std::chrono::high_resolution_clock::now();
@@ -40,12 +32,9 @@ int main()
         start)
       .count() < 10)
     {
-      // Enable and run motors
+      // Enable and run motor
       motor.Heartbeat();
-      motor2.Heartbeat();
-
-      motor.SetDutyCycle(0.05);
-      motor2.SetDutyCycle(0.1);
+      motor.SetDutyCycle(0.1);
     }
   } catch (const std::exception & e) {
     std::cerr << "Error: " << e.what() << std::endl;
