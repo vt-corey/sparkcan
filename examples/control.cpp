@@ -12,19 +12,7 @@ int main() {
     // Initialize SparkFlex object with CAN interface and CAN ID
     SparkFlex motor("can0", 1);
 
-    // Configure and burn parameters for NEO Vortex
-    motor.SetIdleMode(IdleMode::kBrake);
-    motor.SetMotorType(MotorType::kBrushless);
-    motor.SetSensorType(SensorType::kHallSensor);
-    motor.SetRampRate(0.1);
-    motor.SetInverted(false);
-    motor.SetMotorKv(565);
-    motor.SetEncoderCountsPerRev(7168);
-    motor.SetSmartCurrentFreeLimit(20.0);
-    motor.SetSmartCurrentStallLimit(20.0);
-    motor.BurnFlash();
-
-    // Loop for 10 seconds
+    // Loop for 30 seconds
     auto start = std::chrono::high_resolution_clock::now();
     while (std::chrono::duration_cast<std::chrono::seconds>(
                std::chrono::high_resolution_clock::now() - start)
