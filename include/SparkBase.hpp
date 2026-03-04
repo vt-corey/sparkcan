@@ -325,7 +325,7 @@ struct Period4Status
 class SparkBase
 {
 private:
-  inline static int soc_ = -1;   ///< Socket descriptor for CAN communication
+  int soc_ = -1;                  ///< Socket descriptor for CAN communication
   std::string interfaceName_;    ///< Name of the CAN interface
   uint8_t deviceId_;             ///< Device ID for the SPARK controller on the CAN bus
   struct sockaddr_can addr_;     ///< Socket address for the CAN interface
