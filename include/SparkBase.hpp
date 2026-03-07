@@ -74,7 +74,13 @@ enum class APICommand : uint16_t
   Period1 = (6 << 4) | 1,
   Period2 = (6 << 4) | 2,
   Period3 = (6 << 4) | 3,
-  Period4 = (6 << 4) | 4
+  Period4 = (6 << 4) | 4,
+
+  // SPARK Flex periodic status frames use API class 46 instead of class 6
+  FlexPeriod1 = (46 << 4) | 0,  // velocity, temperature, bus voltage, current
+  FlexPeriod2 = (46 << 4) | 1,  // position
+  FlexPeriod3 = (46 << 4) | 2,  // analog sensor
+  FlexPeriod4 = (46 << 4) | 3   // alternate encoder
 };
 
 /**

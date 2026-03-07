@@ -433,6 +433,20 @@ void SparkBase::ReadPeriodicMessages()
         std::memcpy(&period4_.altEncoderVelocity, &velocity, 4);
         std::memcpy(&period4_.altEncoderPosition, &position, 4);
         period4_.timestamp = now;
+
+      // SPARK Flex status frames (API class 46)
+      } else if (receivedArbId == CreateArbId(APICommand::FlexPeriod1)) {
+        uint32_t velocity = rawValue & 0xFFFFFFFF;
+        std::memcpy(&period1_.velocity, &velocity, 4);
+        period1_.temperature = (rawValue >> 32) & 0xFF;
+        period1_.voltage = ((rawValue >> 40) & 0xFF) * 0.5f;  // Flex: 0.5 V/count
+        period1_.current = ((rawValue >> 48) & 0xFFF) / 32.0f;
+        period1_.timestamp = now;
+      } else if (receivedArbId == CreateArbId(APICommand::FlexPeriod2)) {
+        uint32_t position = rawValue & 0xFFFFFFFF;
+        std::memcpy(&period2_.position, &position, 4);
+        period2_.iAccum = float((rawValue >> 32) & 0xFFFFFFFF) / 1000.0f;
+        period2_.timestamp = now;
       }
     }
   }
