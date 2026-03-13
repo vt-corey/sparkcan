@@ -510,6 +510,16 @@ void SparkBase::SetVelocity(float velocity)
   SendControlMessage(APICommand::Velocity, "Velocity", velocity);
 }
 
+void SparkBase::SendSetpointWithCtrlType(float value, uint8_t ctrlType, uint8_t ctrlBytePos)
+{
+  std::vector<uint8_t> data(8, 0);
+  std::memcpy(data.data(), &value, sizeof(value));
+  if (ctrlBytePos >= 4 && ctrlBytePos <= 7) {
+    data[ctrlBytePos] = ctrlType;
+  }
+  SendCanFrame(APICommand::DutyCycle, data);
+}
+
 void SparkBase::SetSmartVelocity(float smartVelocity)
 {
   SendControlMessage(APICommand::SmartVelocity, "Smart Velocity", smartVelocity);

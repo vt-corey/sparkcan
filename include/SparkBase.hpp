@@ -565,6 +565,22 @@ public:
   void SetVelocity(float velocity);
 
   /**
+   * @brief Sends a velocity setpoint with control type encoded in the data bytes
+   * (REVLib-style) instead of in the arbitration ID API class.
+   *
+   * The CAN frame is sent on the DutyCycle arbitration ID with:
+   *   bytes 0-3: velocity setpoint as IEEE 754 float
+   *   bytes 4-5: unused (0)
+   *   byte 6:    control type (1 = kVelocity)
+   *   byte 7:    unused (0)
+   *
+   * @param value The setpoint value (e.g. RPM for velocity)
+   * @param ctrlType Control type byte (1=velocity, 0=dutycycle, 2=voltage, 3=position)
+   * @param ctrlBytePos Which byte (4-7) to place the control type in (default: 6)
+   */
+  void SendSetpointWithCtrlType(float value, uint8_t ctrlType, uint8_t ctrlBytePos = 6);
+
+  /**
    * @brief Sets the motor's smart velocity
    * @param smartVelocity The desired smart velocity
    */
