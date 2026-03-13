@@ -7,7 +7,18 @@
 #include "SparkFlex.hpp"
 
 /*
- * Velocity control test using the sparkcan library directly.
+ * Diagnostic test to determine if the Spark Flex is interpreting
+ * the setpoint as velocity (RPM) or duty cycle (clamped to 1.0).
+ *
+ * Key phases:
+ *   Phase A: DutyCycle(0.2) — known baseline ~20% speed
+ *   Phase B: DutyCycle(1.0) — known full speed baseline
+ *   Phase C: 3000 RPM with ctrl=1 — if velocity: ~53% speed; if duty clamped: full speed
+ *   Phase D: 500 RPM with ctrl=1  — if velocity: ~9% speed;  if duty clamped: full speed
+ *   Phase E: 100 RPM with ctrl=1  — if velocity: ~2% speed;  if duty clamped: full speed
+ *
+ * If C/D/E all run at the SAME speed as Phase B, it's clamping duty cycle.
+ * If C is faster than D, and D is faster than E, it's doing velocity control.
  *
  * Build (on Pi):
  *   /usr/bin/g++ -std=c++17 -O2 -I include -o velocity_ctrl_test \
@@ -34,13 +45,13 @@ static void run_phase(SparkFlex & motor, const char * label, int seconds,
   }
 
   // Stop
-  for (int i = 0; i < 10; i++) {
+  for (int i = 0; i < 15; i++) {
     motor.Heartbeat();
     motor.SetDutyCycle(0.0f);
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
   }
-  std::cout << "  >> Did the motor move?" << std::endl;
-  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  std::cout << "  >> Observe speed. Press enter to continue..." << std::endl;
+  std::this_thread::sleep_for(std::chrono::seconds(1));
 }
 
 int main(int argc, char * argv[])
@@ -48,47 +59,45 @@ int main(int argc, char * argv[])
   uint8_t dev_id = 1;
   if (argc > 1) dev_id = std::atoi(argv[1]);
 
-  std::cout << "Velocity control test for device " << (int)dev_id << std::endl;
+  std::cout << "Velocity vs DutyCycle diagnostic for device " << (int)dev_id << std::endl;
+  std::cout << "Watch motor speed carefully in each phase.\n" << std::endl;
 
   try {
     SparkFlex motor("can0", dev_id);
 
-    // Phase 0: DutyCycle baseline — this MUST work
-    run_phase(motor, "Phase 0: DutyCycle(0.2) baseline", 3, [&]() {
+    // Phase A: Known duty cycle baselines
+    run_phase(motor, "Phase A: DutyCycle(0.2) — SLOW baseline", 4, [&]() {
       motor.SetDutyCycle(0.2f);
     });
 
-    // Phase 1: ctrl=1 in byte 4
-    run_phase(motor, "Phase 1: vel=500 ctrl=1 @ byte4", 3, [&]() {
-      motor.SendSetpointWithCtrlType(500.0f, 1, 4);
+    run_phase(motor, "Phase B: DutyCycle(1.0) — FULL SPEED baseline", 4, [&]() {
+      motor.SetDutyCycle(1.0f);
     });
 
-    // Phase 2: ctrl=1 in byte 5
-    run_phase(motor, "Phase 2: vel=500 ctrl=1 @ byte5", 3, [&]() {
-      motor.SendSetpointWithCtrlType(500.0f, 1, 5);
+    // Phase C-E: Velocity setpoints via ctrl byte — if velocity control works,
+    // these should run at DIFFERENT speeds proportional to the RPM value.
+    // Using byte 6 for ctrl type.
+    run_phase(motor, "Phase C: vel=3000 ctrl=1 @ byte6 — should be ~53% if velocity", 4, [&]() {
+      motor.SendSetpointWithCtrlType(3000.0f, 1, 6);
     });
 
-    // Phase 3: ctrl=1 in byte 6
-    run_phase(motor, "Phase 3: vel=500 ctrl=1 @ byte6", 3, [&]() {
+    run_phase(motor, "Phase D: vel=500 ctrl=1 @ byte6 — should be ~9% if velocity", 4, [&]() {
       motor.SendSetpointWithCtrlType(500.0f, 1, 6);
     });
 
-    // Phase 4: ctrl=1 in byte 7
-    run_phase(motor, "Phase 4: vel=500 ctrl=1 @ byte7", 3, [&]() {
-      motor.SendSetpointWithCtrlType(500.0f, 1, 7);
-    });
-
-    // Phase 5: lower velocity (100 RPM) with ctrl in byte 6
-    run_phase(motor, "Phase 5: vel=100 ctrl=1 @ byte6", 3, [&]() {
+    run_phase(motor, "Phase E: vel=100 ctrl=1 @ byte6 — should be ~2% if velocity", 4, [&]() {
       motor.SendSetpointWithCtrlType(100.0f, 1, 6);
     });
 
-    // Phase 6: sparkcan's existing SetVelocity (API class 1 in arb ID)
-    run_phase(motor, "Phase 6: SetVelocity(500) arb-ID method", 3, [&]() {
-      motor.SetVelocity(500.0f);
+    // Phase F: Send 500.0 as plain DutyCycle (no ctrl byte) — if Flex clamps,
+    // this should match Phase B (full speed)
+    run_phase(motor, "Phase F: DutyCycle raw 500.0 (no ctrl byte) — clamping test", 4, [&]() {
+      motor.SendSetpointWithCtrlType(500.0f, 0, 6);  // ctrl=0 means kDutyCycle
     });
 
     std::cout << "\nAll phases complete." << std::endl;
+    std::cout << "\nKey question: Did C > D > E in speed? If yes, velocity control works!" << std::endl;
+    std::cout << "Did C/D/E all match Phase B? If yes, it's just clamping duty cycle." << std::endl;
 
     for (int i = 0; i < 20; i++) {
       motor.Heartbeat();
