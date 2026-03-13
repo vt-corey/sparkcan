@@ -6,7 +6,7 @@
 
 #include "SparkFlex.hpp"
 
-/*
+/*testtest
  * Diagnostic test to determine if the Spark Flex is interpreting
  * the setpoint as velocity (RPM) or duty cycle (clamped to 1.0).
  *
