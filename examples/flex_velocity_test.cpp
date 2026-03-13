@@ -7,12 +7,12 @@
 #include "SparkFlex.hpp"
 
 /*
- * Standalone velocity-control test for Spark Flex + Neo Vortex.
+ * Test: does the Spark Flex accept velocity via SetCtrlType + SetSetpoint
+ * instead of the Spark MAX-style SetVelocity (API class 1)?
  *
  * Build:
  *   /usr/bin/g++ -std=c++17 -Iinclude -o flex_velocity_test \
  *       examples/flex_velocity_test.cpp src/SparkBase.cpp src/SparkFlex.cpp -lpthread
- *
  * Run:
  *   sudo ./flex_velocity_test [can_id]
  */
@@ -55,68 +55,47 @@ int main(int argc, char * argv[])
     motor.ResetFaults();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    // --- Phase 1: duty cycle baseline ---
-    run_phase(motor, "Phase 1: DutyCycle 0.2 (sanity check)", 5, [&]() {
+    // --- Phase 1: DutyCycle baseline ---
+    run_phase(motor, "Phase 1: DutyCycle 0.2 (baseline)", 5, [&]() {
       motor.SetDutyCycle(0.2f);
     });
 
     motor.SetDutyCycle(0.0f);
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-    // --- Phase 2: SetCtrlType(kVelocity) + PID + SetVelocity ---
-    std::cout << "\nSetting CtrlType to kVelocity..." << std::endl;
-    motor.SetCtrlType(CtrlType::kVelocity);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
+    // --- Phase 2: SetCtrlType(kVelocity) + PID + SetSetpoint(500) ---
+    std::cout << "\nConfiguring velocity mode via CtrlType + Setpoint..." << std::endl;
     float kF = 1.0f / 5700.0f;
     float kP = 0.0002f;
-    std::cout << "Setting PID slot 0: kP=" << kP << " kF=" << kF << std::endl;
     motor.SetP(0, kP);
     motor.SetI(0, 0.0f);
     motor.SetD(0, 0.0f);
     motor.SetF(0, kF);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
-    run_phase(motor, "Phase 2: CtrlType=Velocity + SetVelocity(500)", 5, [&]() {
-      motor.SetVelocity(500.0f);
-    });
-
-    motor.SetDutyCycle(0.0f);
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-    // --- Phase 3: Try SmartVelocity instead ---
-    run_phase(motor, "Phase 3: SetSmartVelocity(500)", 5, [&]() {
-      motor.SetSmartVelocity(500.0f);
-    });
-
-    motor.SetDutyCycle(0.0f);
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-    // --- Phase 4: BurnFlash then SetVelocity ---
-    std::cout << "\nBurnFlash + retry SetVelocity..." << std::endl;
     motor.SetCtrlType(CtrlType::kVelocity);
-    motor.SetP(0, kP);
-    motor.SetI(0, 0.0f);
-    motor.SetD(0, 0.0f);
-    motor.SetF(0, kF);
-    motor.BurnFlash();
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::cout << "PID: kP=" << kP << " kF=" << kF << "  CtrlType=Velocity" << std::endl;
 
-    run_phase(motor, "Phase 4: BurnFlash + SetVelocity(500)", 5, [&]() {
-      motor.SetVelocity(500.0f);
+    run_phase(motor, "Phase 2: CtrlType=Velocity + SetSetpoint(500)", 5, [&]() {
+      motor.SetSetpoint(500.0f);
     });
 
     motor.SetDutyCycle(0.0f);
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-    // --- Phase 5: Large kP, no kF, SetVelocity ---
-    std::cout << "\nTrying large kP=0.01 with no kF..." << std::endl;
-    motor.SetP(0, 0.01f);
-    motor.SetF(0, 0.0f);
+    // --- Phase 3: Higher RPM via SetSetpoint ---
+    run_phase(motor, "Phase 3: CtrlType=Velocity + SetSetpoint(2000)", 5, [&]() {
+      motor.SetSetpoint(2000.0f);
+    });
+
+    motor.SetDutyCycle(0.0f);
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    // --- Phase 4: Switch back to DutyCycle to confirm motor still responds ---
+    motor.SetCtrlType(CtrlType::kDutyCycle);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    run_phase(motor, "Phase 5: kP=0.01 + SetVelocity(500)", 5, [&]() {
-      motor.SetVelocity(500.0f);
+    run_phase(motor, "Phase 4: Back to DutyCycle 0.2 (confirm recovery)", 3, [&]() {
+      motor.SetDutyCycle(0.2f);
     });
 
     // --- Stop ---
