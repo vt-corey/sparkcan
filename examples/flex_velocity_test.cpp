@@ -51,7 +51,7 @@ static void send_frame(int sock, uint32_t arb_id, const uint8_t data[8]) {
 // Heartbeat = apiClass=11, apiIndex=2
 static void send_heartbeat(int sock, uint8_t dev_id) {
   uint32_t hb_id = make_arb_id(0x02, 0x05, 11, 2, dev_id);
-  uint8_t hb_data[8] = {};
+  uint8_t hb_data[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
   send_frame(sock, hb_id, hb_data);
 }
 
