@@ -1,6 +1,5 @@
 #include <chrono>
 #include <cstdlib>
-#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <thread>
@@ -12,23 +11,16 @@
  *
  * Build on the Pi:
  *   cd ~/ros-turtle/sparkcan
- *   g++ -std=c++17 -Iinclude -o flex_velocity_test \
+ *   /usr/bin/g++ -std=c++17 -Iinclude -o flex_velocity_test \
  *       examples/flex_velocity_test.cpp src/SparkBase.cpp src/SparkFlex.cpp \
  *       -lpthread
  *
  * Run:
  *   sudo ./flex_velocity_test [can_id]     # default can_id=1
- *
- * The test runs 4 phases (5 s each):
- *   1) Duty cycle 20% — baseline sanity check
- *   2) Velocity 500 RPM with kF only (no kP)
- *   3) Velocity 500 RPM with kF + kP
- *   4) Velocity 2000 RPM with kF + kP
- * Then stops the motor.
  */
 
-static void run_phase(SparkFlex & motor, const char * label, int seconds,
-                      std::function<void()> command)
+template <typename Fn>
+static void run_phase(SparkFlex & motor, const char * label, int seconds, Fn command)
 {
   std::cout << "\n=== " << label << " (" << seconds << "s) ===" << std::endl;
   auto start = std::chrono::steady_clock::now();
@@ -70,7 +62,6 @@ int main(int argc, char * argv[])
       motor.SetDutyCycle(0.2f);
     });
 
-    // Stop briefly between phases
     motor.SetDutyCycle(0.0f);
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
