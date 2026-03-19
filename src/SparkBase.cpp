@@ -517,7 +517,7 @@ void SparkBase::SendSetpointWithCtrlType(float value, uint8_t ctrlType, uint8_t 
   if (ctrlBytePos >= 4 && ctrlBytePos <= 7) {
     data[ctrlBytePos] = ctrlType;
   }
-  SendCanFrame(APICommand::DutyCycle, data);
+  SendCanFrame(APICommand::Setpoint, data);
 }
 
 void SparkBase::SetSmartVelocity(float smartVelocity)

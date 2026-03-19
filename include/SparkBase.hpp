@@ -568,7 +568,7 @@ public:
    * @brief Sends a velocity setpoint with control type encoded in the data bytes
    * (REVLib-style) instead of in the arbitration ID API class.
    *
-   * The CAN frame is sent on the DutyCycle arbitration ID with:
+   * The CAN frame is sent on the Setpoint arbitration ID with:
    *   bytes 0-3: velocity setpoint as IEEE 754 float
    *   bytes 4-5: unused (0)
    *   byte 6:    control type (1 = kVelocity)
