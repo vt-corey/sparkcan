@@ -6,6 +6,8 @@
 
 #include "SparkBase.hpp"
 
+#include <linux/can/raw.h>
+
 SparkBase::SparkBase(const std::string & interfaceName, uint8_t deviceId)
 : interfaceName_(interfaceName), deviceId_(deviceId)
 {
@@ -49,6 +51,24 @@ SparkBase::SparkBase(const std::string & interfaceName, uint8_t deviceId)
             RED "Binding to interface failed: Another program may be using this interface." RESET);
   }
 
+  // Increase socket buffers to tolerate bursty traffic on USB-CAN adapters.
+  const int socket_buffer_size = 1 << 20;  // 1 MiB
+  (void)setsockopt(soc_, SOL_SOCKET, SO_RCVBUF, &socket_buffer_size, sizeof(socket_buffer_size));
+  (void)setsockopt(soc_, SOL_SOCKET, SO_SNDBUF, &socket_buffer_size, sizeof(socket_buffer_size));
+
+  // Keep echo traffic from this same socket disabled.
+  const int recv_own_msgs = 0;
+  (void)setsockopt(soc_, SOL_CAN_RAW, CAN_RAW_RECV_OWN_MSGS, &recv_own_msgs, sizeof(recv_own_msgs));
+
+  // Filter to this specific device ID to reduce userspace RX load.
+  struct can_filter filter = {};
+  filter.can_id =
+    ((static_cast<uint32_t>(DEVICE_TYPE) << 24) |
+    (static_cast<uint32_t>(MANUFACTURER) << 16) |
+    static_cast<uint32_t>(deviceId_)) | CAN_EFF_FLAG;
+  filter.can_mask = CAN_EFF_FLAG | 0xFFFF003Fu;  // Match dev type + mfg + device ID.
+  (void)setsockopt(soc_, SOL_CAN_RAW, CAN_RAW_FILTER, &filter, sizeof(filter));
+
   thread_ = std::thread(&SparkBase::ReadPeriodicMessages, this);
 }
 
@@ -73,7 +93,7 @@ void SparkBase::SendCanFrame(APICommand cmd, const std::vector<uint8_t> & data) 
   std::memcpy(frame.data, data.data(), data.size());
 
   constexpr std::chrono::milliseconds WAIT_TIME(1);
-  constexpr int MAX_ATTEMPTS = 1000;
+  constexpr int MAX_ATTEMPTS = 50;
 
   for (int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
     ssize_t bytesSent = write(soc_, &frame, sizeof(frame));
@@ -106,7 +126,7 @@ void SparkBase::SendCanFrame(uint32_t arbId, const std::vector<uint8_t> & data) 
   std::memcpy(frame.data, data.data(), data.size());
 
   constexpr std::chrono::milliseconds WAIT_TIME(1);
-  constexpr int MAX_ATTEMPTS = 1000;
+  constexpr int MAX_ATTEMPTS = 50;
 
   for (int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
     ssize_t bytesSent = write(soc_, &frame, sizeof(frame));
@@ -379,10 +399,13 @@ void SparkBase::ReadPeriodicMessages()
     if (ret > 0) {
       ssize_t bytesRead = read(soc_, &response, sizeof(response));
       if (bytesRead <= 0) {
-        if (errno != EAGAIN && errno != EWOULDBLOCK) {
-          // Try again
-          break;
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+          continue;
         }
+        continue;
+      }
+
+      if (response.can_dlc == 0) {
         continue;
       }
 
