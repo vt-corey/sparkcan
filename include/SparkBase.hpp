@@ -333,6 +333,14 @@ class SparkBase
 protected:
   bool is_flex_ = false;  ///< True for SPARK Flex (different telemetry encoding)
 
+  /**
+   * @brief Sends a CAN frame
+   *
+   * @param cmd The API command associated with the CAN frame
+   * @param data The data payload to send in the CAN frame
+   */
+  void SendCanFrame(APICommand cmd, const std::vector<uint8_t> & data) const;
+
 private:
   int soc_ = -1;                  ///< Socket descriptor for CAN communication
   std::string interfaceName_;    ///< Name of the CAN interface
@@ -350,14 +358,6 @@ private:
   Period2Status period2_{};
   Period3Status period3_{};
   Period4Status period4_{};
-
-  /**
-   * @brief Sends a CAN frame
-   *
-   * @param cmd The API command associated with the CAN frame
-   * @param data The data payload to send in the CAN frame
-   */
-  void SendCanFrame(APICommand cmd, const std::vector<uint8_t> & data) const;
 
   /**
    * @brief Sends a CAN frame with a custom arbitration ID
