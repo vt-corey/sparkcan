@@ -61,13 +61,11 @@ SparkBase::SparkBase(const std::string & interfaceName, uint8_t deviceId)
   const int recv_own_msgs = 0;
   (void)setsockopt(soc_, SOL_CAN_RAW, CAN_RAW_RECV_OWN_MSGS, &recv_own_msgs, sizeof(recv_own_msgs));
 
-  // Filter to this specific device ID to reduce userspace RX load.
+  // DEBUG: disable filter to test if filter is blocking frames
+  // Accept all extended frames
   struct can_filter filter = {};
-  filter.can_id =
-    ((static_cast<uint32_t>(DEVICE_TYPE) << 24) |
-    (static_cast<uint32_t>(MANUFACTURER) << 16) |
-    static_cast<uint32_t>(deviceId_)) | CAN_EFF_FLAG;
-  filter.can_mask = CAN_EFF_FLAG | 0xFFFF003Fu;  // Match dev type + mfg + device ID.
+  filter.can_id = CAN_EFF_FLAG;
+  filter.can_mask = CAN_EFF_FLAG;  // Match any extended frame
   (void)setsockopt(soc_, SOL_CAN_RAW, CAN_RAW_FILTER, &filter, sizeof(filter));
 
   thread_ = std::thread(&SparkBase::ReadPeriodicMessages, this);
