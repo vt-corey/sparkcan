@@ -482,7 +482,7 @@ void SparkBase::ReadPeriodicMessages()
         std::memcpy(&period4_.altEncoderVelocity, &velocity, 4);
         std::memcpy(&period4_.altEncoderPosition, &position, 4);
         period4_.timestamp = now;
-
+      }
       // Note: Spark Flex sends periodic status on API class 6 (same as MAX),
       // NOT on class 46. FlexPeriod handlers removed — class 46 frames are never sent.
     }
