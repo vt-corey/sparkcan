@@ -456,10 +456,10 @@ void SparkBase::ReadPeriodicMessages()
         uint32_t velocity = rawValue & 0xFFFFFFFF;
         std::memcpy(&period1_.velocity, &velocity, 4);
         period1_.temperature = (rawValue >> 32) & 0xFF;
-        // Bytes 5-6: voltage at 1/128 V per count (same encoding for MAX and Flex on class 6)
-        period1_.voltage = ((rawValue >> 40) & 0xFFFF) / 128.0f;
-        // Bits 48-59: current (12-bit) at 1/32 A per count
-        period1_.current = ((rawValue >> 48) & 0xFFF) / 32.0f;
+        // Bits 40-51: voltage (12-bit) at 1/128 V per count
+        period1_.voltage = ((rawValue >> 40) & 0xFFF) / 128.0f;
+        // Bits 52-63: current (12-bit) at 1/32 A per count
+        period1_.current = ((rawValue >> 52) & 0xFFF) / 32.0f;
         period1_.timestamp = now;
       } else if (receivedArbId == CreateArbId(APICommand::Period2)) {
         uint32_t position = rawValue & 0xFFFFFFFF;
