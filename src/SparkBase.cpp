@@ -413,12 +413,16 @@ void SparkBase::ReadPeriodicMessages()
       // Process the frame
       uint32_t receivedArbId = response.can_id & CAN_EFF_MASK;
 
-      // DEBUG: log first few frames received per device
+      // DEBUG: log frames to file
+      static FILE* dbg_fp = fopen("/tmp/sparkcan_debug.log", "w");
       static int dbg_count = 0;
-      if (dbg_count < 20) {
-        fprintf(stderr, "[sparkcan-dbg] dev=%u got arb=0x%08X dlc=%u expect_p1=0x%08X\n",
+      if (dbg_fp && dbg_count < 40) {
+        fprintf(dbg_fp, "dev=%u arb=0x%08X dlc=%u expect_p0=0x%08X p1=0x%08X is_flex=%d\n",
           deviceId_, receivedArbId, response.can_dlc,
-          CreateArbId(APICommand::Period1));
+          CreateArbId(APICommand::Period0),
+          CreateArbId(APICommand::Period1),
+          is_flex_ ? 1 : 0);
+        fflush(dbg_fp);
         dbg_count++;
       }
       uint64_t rawValue = 0;
