@@ -7,7 +7,10 @@
 #include "SparkFlex.hpp"
 
 SparkFlex::SparkFlex(const std::string & interfaceName, uint8_t deviceId)
-: SparkBase(interfaceName, deviceId) {}
+: SparkBase(interfaceName, deviceId)
+{
+  is_flex_ = true;
+}
 
 // Spark Flex uses API class 46 for periodic status frames 1-4,
 // not class 6 (which is Spark MAX format and is silently ignored by Flex firmware).

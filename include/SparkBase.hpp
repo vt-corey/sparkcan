@@ -330,6 +330,9 @@ struct Period4Status
  */
 class SparkBase
 {
+protected:
+  bool is_flex_ = false;  ///< True for SPARK Flex (different telemetry encoding)
+
 private:
   int soc_ = -1;                  ///< Socket descriptor for CAN communication
   std::string interfaceName_;    ///< Name of the CAN interface
