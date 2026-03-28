@@ -456,13 +456,9 @@ void SparkBase::ReadPeriodicMessages()
         uint32_t velocity = rawValue & 0xFFFFFFFF;
         std::memcpy(&period1_.velocity, &velocity, 4);
         period1_.temperature = (rawValue >> 32) & 0xFF;
-        if (is_flex_) {
-          // Spark Flex: byte 5 is voltage at 0.1V per count
-          period1_.voltage = ((rawValue >> 40) & 0xFF) * 0.1f;
-        } else {
-          // Spark MAX: bytes 5-6 are voltage at 1/128 V per count
-          period1_.voltage = ((rawValue >> 40) & 0xFFFF) / 128.0f;
-        }
+        // Bytes 5-6: voltage at 1/128 V per count (same encoding for MAX and Flex on class 6)
+        period1_.voltage = ((rawValue >> 40) & 0xFFFF) / 128.0f;
+        // Bits 48-59: current (12-bit) at 1/32 A per count
         period1_.current = ((rawValue >> 48) & 0xFFF) / 32.0f;
         period1_.timestamp = now;
       } else if (receivedArbId == CreateArbId(APICommand::Period2)) {
@@ -487,20 +483,8 @@ void SparkBase::ReadPeriodicMessages()
         std::memcpy(&period4_.altEncoderPosition, &position, 4);
         period4_.timestamp = now;
 
-      // SPARK Flex status frames (API class 46)
-      } else if (receivedArbId == CreateArbId(APICommand::FlexPeriod1)) {
-        uint32_t velocity = rawValue & 0xFFFFFFFF;
-        std::memcpy(&period1_.velocity, &velocity, 4);
-        period1_.temperature = (rawValue >> 32) & 0xFF;
-        period1_.voltage = ((rawValue >> 40) & 0xFF) * 0.5f;  // Flex: 0.5 V/count
-        period1_.current = ((rawValue >> 48) & 0xFFF) / 32.0f;
-        period1_.timestamp = now;
-      } else if (receivedArbId == CreateArbId(APICommand::FlexPeriod2)) {
-        uint32_t position = rawValue & 0xFFFFFFFF;
-        std::memcpy(&period2_.position, &position, 4);
-        period2_.iAccum = float((rawValue >> 32) & 0xFFFFFFFF) / 1000.0f;
-        period2_.timestamp = now;
-      }
+      // Note: Spark Flex sends periodic status on API class 6 (same as MAX),
+      // NOT on class 46. FlexPeriod handlers removed — class 46 frames are never sent.
     }
   }
 }
