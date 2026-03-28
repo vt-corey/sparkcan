@@ -7,6 +7,7 @@
 #include "SparkBase.hpp"
 
 #include <linux/can/raw.h>
+#include <cstdio>  // temporary debug
 
 SparkBase::SparkBase(const std::string & interfaceName, uint8_t deviceId)
 : interfaceName_(interfaceName), deviceId_(deviceId)
@@ -411,6 +412,15 @@ void SparkBase::ReadPeriodicMessages()
 
       // Process the frame
       uint32_t receivedArbId = response.can_id & CAN_EFF_MASK;
+
+      // DEBUG: log first few frames received per device
+      static int dbg_count = 0;
+      if (dbg_count < 20) {
+        fprintf(stderr, "[sparkcan-dbg] dev=%u got arb=0x%08X dlc=%u expect_p1=0x%08X\n",
+          deviceId_, receivedArbId, response.can_dlc,
+          CreateArbId(APICommand::Period1));
+        dbg_count++;
+      }
       uint64_t rawValue = 0;
       for (int i = 0; i < response.can_dlc; ++i) {
         rawValue |= uint64_t(response.data[i]) << (8 * i);
