@@ -384,11 +384,20 @@ std::optional<std::tuple<uint8_t, uint8_t, uint8_t, uint8_t, bool>> SparkBase::R
 
 void SparkBase::ReadPeriodicMessages()
 {
+  // DEBUG: log thread start and socket state to file
+  FILE* dbg_fp = fopen("/tmp/sparkcan_debug.log", "a");
+  if (dbg_fp) {
+    fprintf(dbg_fp, "=== ReadPeriodicMessages started: dev=%u soc=%d is_flex=%d ===\n",
+      deviceId_, soc_, is_flex_ ? 1 : 0);
+    fflush(dbg_fp);
+  }
+
   // Set socket to non-blocking
   int flags = fcntl(soc_, F_GETFL, 0);
   fcntl(soc_, F_SETFL, flags | O_NONBLOCK);
 
   struct can_frame response = {};
+  int dbg_count = 0;
 
   while (run_) {
     struct timeval tv = {0, READ_TIMEOUT_US};
@@ -397,6 +406,14 @@ void SparkBase::ReadPeriodicMessages()
     FD_SET(soc_, &read_fds);
 
     int ret = select(soc_ + 1, &read_fds, nullptr, nullptr, &tv);
+
+    // DEBUG: log select results for first iterations
+    if (dbg_fp && dbg_count < 30) {
+      fprintf(dbg_fp, "dev=%u select=%d errno=%d\n", deviceId_, ret, ret < 0 ? errno : 0);
+      fflush(dbg_fp);
+      dbg_count++;
+    }
+
     if (ret > 0) {
       ssize_t bytesRead = read(soc_, &response, sizeof(response));
       if (bytesRead <= 0) {
@@ -413,17 +430,12 @@ void SparkBase::ReadPeriodicMessages()
       // Process the frame
       uint32_t receivedArbId = response.can_id & CAN_EFF_MASK;
 
-      // DEBUG: log frames to file
-      static FILE* dbg_fp = fopen("/tmp/sparkcan_debug.log", "w");
-      static int dbg_count = 0;
-      if (dbg_fp && dbg_count < 40) {
-        fprintf(dbg_fp, "dev=%u arb=0x%08X dlc=%u expect_p0=0x%08X p1=0x%08X is_flex=%d\n",
+      // DEBUG: log received frames
+      if (dbg_fp && dbg_count < 60) {
+        fprintf(dbg_fp, "dev=%u FRAME arb=0x%08X dlc=%u expect_p1=0x%08X\n",
           deviceId_, receivedArbId, response.can_dlc,
-          CreateArbId(APICommand::Period0),
-          CreateArbId(APICommand::Period1),
-          is_flex_ ? 1 : 0);
+          CreateArbId(APICommand::Period1));
         fflush(dbg_fp);
-        dbg_count++;
       }
       uint64_t rawValue = 0;
       for (int i = 0; i < response.can_dlc; ++i) {
