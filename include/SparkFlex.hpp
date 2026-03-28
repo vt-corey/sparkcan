@@ -16,32 +16,17 @@
  *
  * This class provides methods to configure, control, and monitor the SPARK Flex.
  * It supports various control modes, parameter settings, and status readings.
+ *
+ * Note: Spark Flex uses the same API class 6 as Spark MAX for periodic status
+ * frames and period-set commands. The voltage encoding in Period1 differs
+ * (1 byte at 0.1V/count vs MAX's 2-byte 1/128V format) — handled by is_flex_
+ * flag in SparkBase::ReadPeriodicMessages().
  */
 class SparkFlex : public SparkBase
 {
 public:
   explicit SparkFlex(const std::string & interfaceName, uint8_t deviceId);
   ~SparkFlex() override = default;
-
-  /**
-   * @brief Override: Spark Flex uses FlexPeriod1 (API class 46) instead of Period1 (class 6)
-   */
-  void SetPeriodicStatus1Period(uint16_t period) override;
-
-  /**
-   * @brief Override: Spark Flex uses FlexPeriod2 (API class 46) instead of Period2 (class 6)
-   */
-  void SetPeriodicStatus2Period(uint16_t period) override;
-
-  /**
-   * @brief Override: Spark Flex uses FlexPeriod3 (API class 46) instead of Period3 (class 6)
-   */
-  void SetPeriodicStatus3Period(uint16_t period) override;
-
-  /**
-   * @brief Override: Spark Flex uses FlexPeriod4 (API class 46) instead of Period4 (class 6)
-   */
-  void SetPeriodicStatus4Period(uint16_t period) override;
 };
 
 #endif // SPARKFLEX_HPP
