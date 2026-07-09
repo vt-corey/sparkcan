@@ -8,8 +8,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Define library targets as shared
 add_library(sparkcan SHARED
     src/SparkBase.cpp
-    src/SparkMax.cpp 
+    src/SparkMax.cpp
     src/SparkFlex.cpp
+    src/Spark25xFrames.cpp
 )
 
 # Set include directories
@@ -17,6 +18,17 @@ target_include_directories(sparkcan PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
+
+# macOS COMPILE-ONLY SocketCAN shim (macos_can_compat/linux/can.h): lets the
+# library and its tests build on macOS dev machines (CAN sockets still fail at
+# runtime there, which is expected). BUILD_INTERFACE-only so it is never
+# installed or exported; on Linux this block is a no-op and the real
+# <linux/can.h> is used.
+if(APPLE)
+    target_include_directories(sparkcan PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/macos_can_compat>
+    )
+endif()
 
 # Define the executables
 add_executable(example_control examples/control.cpp)
@@ -68,3 +80,23 @@ install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/sparkcanConfigVersion.cmake"
     DESTINATION lib/cmake/sparkcan
 )
+
+# Unit tests: configure with -DBUILD_TESTING=ON to enable.
+if(BUILD_TESTING)
+    enable_testing()
+    # Prefer a system/conda-provided GTest; fall back to FetchContent.
+    find_package(GTest QUIET)
+    if(NOT GTest_FOUND)
+        include(FetchContent)
+        FetchContent_Declare(
+            googletest
+            URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
+        )
+        set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(googletest)
+    endif()
+
+    add_executable(test_spark25x_frames tests/test_spark25x_frames.cpp)
+    target_link_libraries(test_spark25x_frames PRIVATE sparkcan GTest::gtest_main)
+    add_test(NAME test_spark25x_frames COMMAND test_spark25x_frames)
+endif()
