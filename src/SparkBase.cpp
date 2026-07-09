@@ -327,69 +327,47 @@ template<typename T> T SparkBase::GetPIDParam(Parameter baseParam, uint8_t slot,
 
 std::optional<std::tuple<uint8_t, uint8_t, uint8_t, uint8_t, bool>> SparkBase::ReadFirmwareVersion()
 {
-  if (protocol_ == Protocol::Spark25x) {
-    // 25.x GET_FIRMWARE_VERSION: same class 9 idx 8 arb id as the classic
-    // query, but sent as an RTR frame (the classic dlc-0 data frame returns
-    // nothing on 25.x). The dlc-8 payload signals the requested reply length;
-    // RTR frames carry no data on the wire. The response is captured by the
-    // reader thread into fw_resp_ (mirrors the param-write response slot).
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      fw_resp_.reset();
-    }
-    try {
+  // Both protocols route the response through the reader thread (which owns
+  // the socket) into fw_resp_ — the query never reads the socket inline, so
+  // it cannot race the reader thread and lose the response.
+  //
+  // Classic: dlc-0 data-frame query. Spark25x: the same class 9 idx 8 arb id
+  // sent as an RTR frame (the classic dlc-0 data frame returns nothing on
+  // 25.x); the dlc-8 payload signals the requested reply length, RTR frames
+  // carry no data on the wire.
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    fw_resp_.reset();
+  }
+  try {
+    if (protocol_ == Protocol::Spark25x) {
       SendRawFrame(
         CreateArbId(APICommand::FirmwareVersion), std::vector<uint8_t>(8, 0x00), true);
-    } catch (const std::runtime_error & e) {
-      std::cerr << YELLOW << "Firmware version RTR query failed: " << e.what() << RESET << "\n";
-      return std::nullopt;
+    } else {
+      SendRawFrame(CreateArbId(APICommand::FirmwareVersion), {});
     }
-    for (int elapsedMs = 0; elapsedMs < 50; elapsedMs += 5) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  } catch (const std::runtime_error & e) {
+    std::cerr << YELLOW << "Firmware version query failed: " << e.what() << RESET << "\n";
+    return std::nullopt;
+  }
+  // Poll BEFORE sleeping so an instant response costs no wait.
+  for (int elapsedMs = 0;; elapsedMs += 5) {
+    {
       std::lock_guard<std::mutex> lock(mutex_);
       if (fw_resp_.has_value()) {
         const auto & d = *fw_resp_;
-        // Per the JSON spec: MAJOR uint8 @0, MINOR uint8 @8, BUILD uint16
-        // big-endian @16, DEBUG_BUILD uint8 @32. BUILD's (high, low) bytes
-        // map onto the classic tuple's (patch, build) slots.
+        // Classic response: major @0, minor @1, patch @2, build @3, debug @4.
+        // 25.x per the JSON spec: MAJOR uint8 @0, MINOR uint8 @8, BUILD
+        // uint16 big-endian @16, DEBUG_BUILD uint8 @32 — BUILD's (high, low)
+        // bytes map onto the classic tuple's (patch, build) slots.
         return std::make_tuple(d[0], d[1], d[2], d[3], d[4] != 0);
       }
     }
-    return std::nullopt;
-  }
-
-  struct can_frame request = {};
-  uint32_t requestarbId = CreateArbId(APICommand::FirmwareVersion);
-  request.can_id = requestarbId | CAN_EFF_FLAG;
-  request.can_dlc = 0;
-
-  if (write(soc_, &request, sizeof(request)) < 0) {
-    perror("Error sending firmware version request");
-    return std::nullopt;
-  }
-
-  struct can_frame response = {};
-  struct timeval tv = {0, READ_TIMEOUT_US};
-  fd_set read_fds;
-  FD_ZERO(&read_fds);
-  FD_SET(soc_, &read_fds);
-
-  int ret = select(soc_ + 1, &read_fds, nullptr, nullptr, &tv);
-  if (ret > 0) {
-    ssize_t bytesRead = read(soc_, &response, sizeof(response));
-    if (bytesRead >= 5) {
-      uint32_t receivedarbId = response.can_id & CAN_EFF_MASK;
-      if (receivedarbId == requestarbId) {
-        uint8_t major = response.data[0];
-        uint8_t minor = response.data[1];
-        uint8_t patch = response.data[2];
-        uint8_t build = response.data[3];
-        bool isDebug = response.data[4] != 0;
-        return std::make_tuple(major, minor, patch, build, isDebug);
-      }
+    if (elapsedMs >= 50) {
+      break;
     }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
-
   return std::nullopt;
 }
 
@@ -472,20 +450,23 @@ void SparkBase::ReadPeriodicMessages()
         std::memcpy(&period4_.altEncoderVelocity, &velocity, 4);
         std::memcpy(&period4_.altEncoderPosition, &position, 4);
         period4_.timestamp = now;
+      } else if (receivedArbId == CreateArbId(APICommand::FirmwareVersion) &&
+        response.can_dlc >= 5)
+      {
+        // Firmware-version responses are captured UNCONDITIONALLY (both
+        // protocols): ReadFirmwareVersion polls this slot instead of racing
+        // this thread with inline socket reads. Same arb id in both modes.
+        std::array<uint8_t, 8> payload{};
+        std::memcpy(payload.data(), response.data, response.can_dlc);
+        fw_resp_ = payload;
       } else if (protocol_ == Protocol::Spark25x) {
-        // Spark 25.x frames (class-46 status, class-14 param responses,
-        // class-9 firmware response). Classic firmware never sends these
-        // arb ids, and this branch is additionally gated on protocol_.
+        // Spark 25.x frames (class-46 status, class-14 param responses).
+        // Classic firmware never sends these arb ids, and this branch is
+        // additionally gated on protocol_.
         if (auto resp = spark25x::DecodeParamWriteResponse(
             receivedArbId, response.data, response.can_dlc, deviceId_))
         {
           param_resp_ = *resp;
-        } else if (receivedArbId == CreateArbId(APICommand::FirmwareVersion) &&
-          response.can_dlc >= 5)
-        {
-          std::array<uint8_t, 8> payload{};
-          std::memcpy(payload.data(), response.data, response.can_dlc);
-          fw_resp_ = payload;
         } else if (response.can_dlc == 8) {
           // The Status decoders assume a full 8-byte payload — short frames
           // are dropped rather than decoded against garbage.
@@ -541,7 +522,19 @@ int64_t SparkBase::Status2AgeMs() const
          .count();
 }
 
-bool SparkBase::WriteParameterVerified(uint8_t paramId, uint32_t rawValue, int retries)
+int64_t SparkBase::Status3AgeMs() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (period3_.timestamp == std::chrono::steady_clock::time_point{}) {
+    return std::numeric_limits<int64_t>::max();  // never received
+  }
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::steady_clock::now() - period3_.timestamp)
+         .count();
+}
+
+bool SparkBase::WriteParameterVerified(
+  uint8_t paramId, uint32_t rawValue, int retries, uint8_t * lastResultCode)
 {
   const auto frame = spark25x::EncodeParamWrite(deviceId_, paramId, rawValue);
   const std::vector<uint8_t> payload(frame.data.begin(), frame.data.end());
@@ -553,26 +546,40 @@ bool SparkBase::WriteParameterVerified(uint8_t paramId, uint32_t rawValue, int r
     }
     // The reader thread owns the socket for receives; it routes the class-14
     // response into param_resp_. Poll that slot — never read the socket here.
+    // Poll BEFORE sleeping so an instant response costs no wait.
     SendRawFrame(frame.arbId, payload);
-    for (int elapsedMs = 0; elapsedMs < 50; elapsedMs += 5) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(5));
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (param_resp_.has_value()) {
-        if (param_resp_->paramId == paramId && param_resp_->resultCode == 0) {
-          return true;
+    for (int elapsedMs = 0;; elapsedMs += 5) {
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (param_resp_.has_value()) {
+          if (param_resp_->paramId == paramId) {
+            // A response for OUR param arrived: expose its result code (the
+            // out-param stays untouched on pure timeout by design).
+            if (lastResultCode != nullptr) {
+              *lastResultCode = param_resp_->resultCode;
+            }
+            if (param_resp_->resultCode == 0) {
+              return true;
+            }
+          }
+          break;  // response for another param, or a nonzero result code — retry
         }
-        break;  // response for another param, or a nonzero result code — retry
       }
+      if (elapsedMs >= 50) {
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
   }
   return false;
 }
 
-bool SparkBase::WriteParameterVerifiedFloat(uint8_t paramId, float value, int retries)
+bool SparkBase::WriteParameterVerifiedFloat(
+  uint8_t paramId, float value, int retries, uint8_t * lastResultCode)
 {
   uint32_t raw;
   std::memcpy(&raw, &value, sizeof(raw));
-  return WriteParameterVerified(paramId, raw, retries);
+  return WriteParameterVerified(paramId, raw, retries, lastResultCode);
 }
 
 bool SparkBase::VerifyProtocol()

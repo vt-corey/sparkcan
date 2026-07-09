@@ -381,8 +381,10 @@ private:
   /// (guarded by mutex_); consumed by WriteParameterVerified.
   std::optional<spark25x::ParamWriteResponse> param_resp_;
 
-  /// Pending Spark 25.x firmware-version response payload, filled by the reader
-  /// thread (guarded by mutex_); consumed by ReadFirmwareVersion.
+  /// Pending firmware-version response payload, filled by the reader thread
+  /// in BOTH protocol modes (guarded by mutex_); consumed by
+  /// ReadFirmwareVersion, which polls this slot instead of racing the reader
+  /// thread with inline socket reads.
   std::optional<std::array<uint8_t, 8>> fw_resp_;
 
   /**
@@ -545,11 +547,15 @@ public:
   /**
    * @brief Requests the firmware version from the SPARK controller
    *
-   * Classic: dlc-0 data-frame query answered inline (may race the reader
-   * thread). Spark25x: the same class 9 idx 8 arb id sent as an RTR frame;
-   * the response is routed through the reader thread. In Spark25x mode the
-   * spec's 16-bit big-endian BUILD field is split across the (patch, build)
-   * tuple slots as (high byte, low byte).
+   * Classic: dlc-0 data-frame query. Spark25x: the same class 9 idx 8 arb id
+   * sent as an RTR frame. In BOTH modes the response is captured by the
+   * reader thread (which owns the socket) into a pending slot polled here —
+   * never read inline, so the query cannot race the reader thread. In
+   * Spark25x mode the spec's 16-bit big-endian BUILD field is split across
+   * the (patch, build) tuple slots as (high byte, low byte).
+   *
+   * Blocks up to ~50 ms waiting for the response. NOT safe for concurrent
+   * calls on the same object (single pending-response slot).
    *
    * @return A tuple of (major, minor, patch, build, isDebugBuild), or std::nullopt on failure
    */
@@ -573,27 +579,54 @@ public:
    * class-14 response captured by the reader thread. Succeeds iff a response
    * for the same parameter id arrives with result code 0; otherwise retries.
    *
+   * Worst case this blocks ~150 ms (default 3 retries x 50 ms wait each).
+   * NOT safe for concurrent calls on the same object: there is a single
+   * pending-response slot, so overlapping calls would consume each other's
+   * responses.
+   *
    * @param paramId The 25.x parameter id (see spark25x::Param25x)
    * @param rawValue The raw 32-bit value to write
    * @param retries Number of send attempts before giving up
+   * @param lastResultCode Optional out-param: set to the result code of the
+   * last response received for this parameter id (0 = accepted, nonzero =
+   * rejected by firmware). Left untouched if no response ever arrived (pure
+   * timeout) — initialize it to a sentinel to distinguish rejection from
+   * silence.
    * @return bool True on verified success
    */
-  bool WriteParameterVerified(uint8_t paramId, uint32_t rawValue, int retries = 3);
+  bool WriteParameterVerified(
+    uint8_t paramId, uint32_t rawValue, int retries = 3,
+    uint8_t * lastResultCode = nullptr);
 
   /**
    * @brief Float convenience overload of WriteParameterVerified (raw IEEE 754 bits)
    *
+   * Same blocking (~150 ms worst case) and concurrency (NOT safe for
+   * concurrent calls on the same object) caveats as WriteParameterVerified.
+   *
    * @param paramId The 25.x parameter id (see spark25x::Param25x)
    * @param value The float value to write
    * @param retries Number of send attempts before giving up
+   * @param lastResultCode Optional out-param: last response's result code;
+   * left untouched on pure timeout (see WriteParameterVerified)
    * @return bool True on verified success
    */
-  bool WriteParameterVerifiedFloat(uint8_t paramId, float value, int retries = 3);
+  bool WriteParameterVerifiedFloat(
+    uint8_t paramId, float value, int retries = 3,
+    uint8_t * lastResultCode = nullptr);
 
   // System Control Methods //
 
   /**
    * @brief Sends a heartbeat signal to keep all SPARK controllers active
+   *
+   * Classic: per-device heartbeat frame (unchanged). Spark25x: a BROADCAST
+   * (device id 0) frame carrying the all-enable 64-bit bitfield
+   * (0xFFFFFFFFFFFFFFFF) — the bench-verified form. A single-bit mask is
+   * deliberately never sent: it would tell every OTHER device it is NOT
+   * enabled. Consequently one call enables ALL devices on the bus, so
+   * multi-motor consumers should call Heartbeat() on ONE motor object per
+   * cycle (not on all N).
    */
   void Heartbeat();
 
@@ -651,7 +684,8 @@ public:
    * @brief Selects the PID slot used by SetVelocity in Spark25x mode
    *
    * The 25.x velocity setpoint frame carries the PID slot; Classic mode
-   * ignores this (slot selection is firmware-side).
+   * ignores this (slot selection is firmware-side). Defaults to slot 0,
+   * the conventional velocity slot.
    *
    * @param slot The PID slot (0-3)
    * @throws std::out_of_range if slot is greater than 3
@@ -660,6 +694,9 @@ public:
 
   /**
    * @brief Selects the PID slot used by SetPosition in Spark25x mode
+   *
+   * Defaults to slot 1, which matches the swerve steer convention
+   * (slot 0 = drive velocity gains, slot 1 = steer position gains).
    *
    * @param slot The PID slot (0-3)
    * @throws std::out_of_range if slot is greater than 3
@@ -828,6 +865,17 @@ public:
    * @return int64_t Age in ms, or INT64_MAX if no frame has ever arrived
    */
   int64_t Status2AgeMs() const;
+
+  /**
+   * @brief Milliseconds since the last analog-bearing status frame arrived
+   *
+   * Classic mode: stamped by the Period3 handler. Spark25x mode: stamped by
+   * the class-46 Status-3 handler (analog position). Lets consumers wait for
+   * or detect a stopped Status-3 stream (e.g. absolute-encoder seeding).
+   *
+   * @return int64_t Age in ms, or INT64_MAX if no frame has ever arrived
+   */
+  int64_t Status3AgeMs() const;
 
   /**
    * @brief Gets the current analog voltage
