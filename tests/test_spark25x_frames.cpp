@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstring>
 
 #include "Spark25xFrames.hpp"
 using namespace spark25x;
@@ -64,4 +65,62 @@ TEST(Decode, ParamWriteResponseMatchesDevice) {
   EXPECT_FALSE(DecodeParamWriteResponse(0x02053843u, d, 7, 4).has_value());
   // Wrong arb id (Status 0 frame for the same device) — not a param response.
   EXPECT_FALSE(DecodeParamWriteResponse(0x0205B803u, d, 7, 3).has_value());
+}
+
+TEST(Decode, ParamWriteResponseShortDlcRejected) {
+  // A truncated response (dlc < 7 per PARAMETER_WRITE_RESPONSE lengthBytes 7)
+  // must be rejected even when the arb id matches — the result code lives in
+  // byte 6, which a short frame does not carry.
+  const uint8_t d[7] = {0xBC, 0x02, 0x01, 0x00, 0x00, 0x00, 0x00};
+  EXPECT_FALSE(DecodeParamWriteResponse(0x02053843u, d, 6, 3).has_value());
+  EXPECT_FALSE(DecodeParamWriteResponse(0x02053843u, d, 0, 3).has_value());
+}
+
+TEST(Decode, Status1SyntheticBitPacking) {
+  // One bit set in each spec range: fault bit 2 (SENSOR_FAULT), warning
+  // bit 18 (ESC_EEPROM_WARNING), sticky fault bit 27, sticky warning bit 44.
+  // Packing per DecodeStatus1: faults = fault byte | warning byte << 8;
+  // stickyFaults = sticky fault byte | sticky warning byte << 8.
+  uint8_t d[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+  d[0] = 1u << 2;         // bit 2
+  d[2] = 1u << (18 - 16); // bit 18
+  d[3] = 1u << (27 - 24); // bit 27
+  d[5] = 1u << (44 - 40); // bit 44
+  auto s = DecodeStatus1(d);
+  EXPECT_EQ(s.faults, (1u << 2) | (1u << 10));
+  EXPECT_EQ(s.stickyFaults, (1u << 3) | (1u << 12));
+}
+
+TEST(Decode, Status3FloatAtByte4) {
+  // ANALOG_POSITION is float32 @ bit 32 (byte 4). Bytes 0-3 are nonzero
+  // garbage to prove the decoder reads at the right offset.
+  const uint8_t d[8] = {0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x00, 0x80, 0x3E};
+  auto s = DecodeStatus3(d);
+  EXPECT_FLOAT_EQ(s.analogPosition, 0.25f);
+}
+
+TEST(Encode, HeartbeatSingleDeviceBit) {
+  // Bit 8 of the LE uint64 bitfield lands in byte 1 only.
+  auto d = EncodeHeartbeat(1ull << 8);
+  for (size_t i = 0; i < d.size(); ++i) {
+    EXPECT_EQ(d[i], i == 1 ? 0x01 : 0x00) << "byte " << i;
+  }
+}
+
+TEST(Encode, ParamWriteFloatRoundTrip) {
+  // Float values travel as raw IEEE 754 bits in bytes 1-4 — reinterpreting
+  // the payload must give back the exact float.
+  auto f = EncodeParamWriteFloat(1, kP0, 0.0002f);
+  EXPECT_EQ(f.data[0], kP0);
+  float roundTripped;
+  std::memcpy(&roundTripped, f.data.data() + 1, sizeof(roundTripped));
+  EXPECT_EQ(roundTripped, 0.0002f);
+}
+
+TEST(Encode, SetpointSlotMasked) {
+  // PID slot is a 2-bit field (bits 48-49): slot 5 (0b101) must be masked
+  // to 0b01, leaving bits 50+ untouched.
+  auto d = EncodeSetpoint(0.0f, 5);
+  EXPECT_EQ(d[6], 0x01);
+  EXPECT_EQ(d[7], 0x00);
 }
