@@ -20,7 +20,9 @@
 class SparkMax : public SparkBase
 {
 public:
-  explicit SparkMax(const std::string & interfaceName, uint8_t deviceId);
+  explicit SparkMax(
+    const std::string & interfaceName, uint8_t deviceId,
+    Protocol protocol = Protocol::Classic);
   ~SparkMax() override = default;
 };
 

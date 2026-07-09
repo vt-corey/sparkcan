@@ -30,6 +30,8 @@
 #include <variant>
 #include <vector>
 
+#include "Spark25xFrames.hpp"
+
 #define RED "\033[31m"    ///< ANSI escape code for setting terminal text color to red
 #define YELLOW "\033[33m" ///< ANSI escape code for setting terminal text color to yellow
 #define CYAN "\033[36m"   ///< ANSI escape code for setting terminal text color to cyan
@@ -44,6 +46,20 @@
 constexpr uint8_t PARAM_TYPE_UINT = 0x01;  ///< Parameter type for unsigned integers
 constexpr uint8_t PARAM_TYPE_FLOAT = 0x02; ///< Parameter type for floating-point numbers
 constexpr uint8_t PARAM_TYPE_BOOL = 0x03;  ///< Parameter type for boolean values
+
+/**
+ * @brief CAN protocol generation spoken by the controller's firmware
+ *
+ * Classic is the original SPARK MAX/Flex protocol (default; existing behavior
+ * is unchanged). Spark25x is the SPARK MAX 25.x-firmware protocol: setpoints
+ * on API class 0, parameter writes on class 14 with verified responses,
+ * telemetry on class-46 status frames, and a broadcast heartbeat bitfield.
+ */
+enum class Protocol
+{
+  Classic,
+  Spark25x
+};
 
 /**
  * @brief API commands for the SPARK controller
@@ -74,13 +90,9 @@ enum class APICommand : uint16_t
   Period1 = (6 << 4) | 1,
   Period2 = (6 << 4) | 2,
   Period3 = (6 << 4) | 3,
-  Period4 = (6 << 4) | 4,
-
-  // SPARK Flex periodic status frames use API class 46 instead of class 6
-  FlexPeriod1 = (46 << 4) | 0,  // velocity, temperature, bus voltage, current
-  FlexPeriod2 = (46 << 4) | 1,  // position
-  FlexPeriod3 = (46 << 4) | 2,  // analog sensor
-  FlexPeriod4 = (46 << 4) | 3   // alternate encoder
+  Period4 = (6 << 4) | 4
+  // Note: API class 46 is used by the Spark 25.x protocol's Status frames
+  // (see Spark25xFrames.hpp) — do not add classic commands there.
 };
 
 /**
@@ -345,6 +357,7 @@ private:
   int soc_ = -1;                  ///< Socket descriptor for CAN communication
   std::string interfaceName_;    ///< Name of the CAN interface
   uint8_t deviceId_;             ///< Device ID for the SPARK controller on the CAN bus
+  Protocol protocol_ = Protocol::Classic;  ///< CAN protocol generation for this controller
   struct sockaddr_can addr_;     ///< Socket address for the CAN interface
   struct ifreq ifr_;             ///< Interface request structure for CAN operations
 
@@ -359,6 +372,19 @@ private:
   Period3Status period3_{};
   Period4Status period4_{};
 
+  /// PID slot used by SetVelocity in Spark25x mode (25.x setpoint frames carry the slot)
+  uint8_t velocity_slot_ = 0;
+  /// PID slot used by SetPosition in Spark25x mode
+  uint8_t position_slot_ = 1;
+
+  /// Pending Spark 25.x parameter-write response, filled by the reader thread
+  /// (guarded by mutex_); consumed by WriteParameterVerified.
+  std::optional<spark25x::ParamWriteResponse> param_resp_;
+
+  /// Pending Spark 25.x firmware-version response payload, filled by the reader
+  /// thread (guarded by mutex_); consumed by ReadFirmwareVersion.
+  std::optional<std::array<uint8_t, 8>> fw_resp_;
+
   /**
    * @brief Sends a CAN frame with a custom arbitration ID
    *
@@ -366,6 +392,16 @@ private:
    * @param data The data payload to send in the CAN frame
    */
   void SendCanFrame(uint32_t arbId, const std::vector<uint8_t> & data) const;
+
+  /**
+   * @brief Sends a raw CAN frame — the single send path used by both
+   * SendCanFrame overloads and the Spark 25.x protocol branches
+   *
+   * @param arbId The full CAN arbitration ID (EFF flag added internally)
+   * @param data The data payload (0-8 bytes)
+   * @param rtr True to set the RTR (remote transmission request) flag
+   */
+  void SendRawFrame(uint32_t arbId, const std::vector<uint8_t> & data, bool rtr = false) const;
 
   /**
    * @brief Sends a control message to the SPARK controller
@@ -495,7 +531,9 @@ public:
    * - CAN bus not initialized
    * - Interface already bound to another program
    */
-  SparkBase(const std::string & interfaceName, uint8_t deviceId);
+  SparkBase(
+    const std::string & interfaceName, uint8_t deviceId,
+    Protocol protocol = Protocol::Classic);
 
   /**
    * @brief Destructor for SparkBase
@@ -506,9 +544,51 @@ public:
 
   /**
    * @brief Requests the firmware version from the SPARK controller
+   *
+   * Classic: dlc-0 data-frame query answered inline (may race the reader
+   * thread). Spark25x: the same class 9 idx 8 arb id sent as an RTR frame;
+   * the response is routed through the reader thread. In Spark25x mode the
+   * spec's 16-bit big-endian BUILD field is split across the (patch, build)
+   * tuple slots as (high byte, low byte).
+   *
    * @return A tuple of (major, minor, patch, build, isDebugBuild), or std::nullopt on failure
    */
   std::optional<std::tuple<uint8_t, uint8_t, uint8_t, uint8_t, bool>> ReadFirmwareVersion();
+
+  /**
+   * @brief Verifies the configured protocol matches the device's firmware
+   *
+   * Spark25x: performs a benign verified parameter write (Status-2 period to
+   * its spec default) — success proves the device answers on class 14.
+   * Classic: succeeds iff the classic firmware-version query answers.
+   *
+   * @return bool True if the device responded as expected for the configured protocol
+   */
+  bool VerifyProtocol();
+
+  /**
+   * @brief Writes a parameter via the Spark 25.x class-14 verified-write path
+   *
+   * Sends the write, then waits (polling every 5 ms, up to 50 ms) for the
+   * class-14 response captured by the reader thread. Succeeds iff a response
+   * for the same parameter id arrives with result code 0; otherwise retries.
+   *
+   * @param paramId The 25.x parameter id (see spark25x::Param25x)
+   * @param rawValue The raw 32-bit value to write
+   * @param retries Number of send attempts before giving up
+   * @return bool True on verified success
+   */
+  bool WriteParameterVerified(uint8_t paramId, uint32_t rawValue, int retries = 3);
+
+  /**
+   * @brief Float convenience overload of WriteParameterVerified (raw IEEE 754 bits)
+   *
+   * @param paramId The 25.x parameter id (see spark25x::Param25x)
+   * @param value The float value to write
+   * @param retries Number of send attempts before giving up
+   * @return bool True on verified success
+   */
+  bool WriteParameterVerifiedFloat(uint8_t paramId, float value, int retries = 3);
 
   // System Control Methods //
 
@@ -566,6 +646,25 @@ public:
    * @param velocity The desired velocity
    */
   void SetVelocity(float velocity);
+
+  /**
+   * @brief Selects the PID slot used by SetVelocity in Spark25x mode
+   *
+   * The 25.x velocity setpoint frame carries the PID slot; Classic mode
+   * ignores this (slot selection is firmware-side).
+   *
+   * @param slot The PID slot (0-3)
+   * @throws std::out_of_range if slot is greater than 3
+   */
+  void SetVelocitySlot(uint8_t slot);
+
+  /**
+   * @brief Selects the PID slot used by SetPosition in Spark25x mode
+   *
+   * @param slot The PID slot (0-3)
+   * @throws std::out_of_range if slot is greater than 3
+   */
+  void SetPositionSlot(uint8_t slot);
 
   /**
    * @brief Sends a velocity setpoint with control type encoded in the data bytes
@@ -716,6 +815,19 @@ public:
    * @return float The integral accumulator
    */
   float GetIAccum() const;
+
+  /**
+   * @brief Milliseconds since the last position-bearing status frame arrived
+   *
+   * Protocol-agnostic: in Classic mode the Period2 handler stamps the
+   * underlying timestamp; in Spark25x mode only the Status-2 handler does
+   * (Status 2 carries velocity AND position; it stamps both caches, and
+   * nothing else touches the position cache's timestamp). Lets consumers
+   * detect a stopped Status-2 stream even while other frames stay fresh.
+   *
+   * @return int64_t Age in ms, or INT64_MAX if no frame has ever arrived
+   */
+  int64_t Status2AgeMs() const;
 
   /**
    * @brief Gets the current analog voltage

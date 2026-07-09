@@ -9,8 +9,8 @@
 #include <linux/can/raw.h>
 #include <cstdio>
 
-SparkBase::SparkBase(const std::string & interfaceName, uint8_t deviceId)
-: interfaceName_(interfaceName), deviceId_(deviceId)
+SparkBase::SparkBase(const std::string & interfaceName, uint8_t deviceId, Protocol protocol)
+: interfaceName_(interfaceName), deviceId_(deviceId), protocol_(protocol)
 {
   // Ensure deviceId_ is within valid range
   if (deviceId_ > 62) {
@@ -85,47 +85,26 @@ SparkBase::~SparkBase()
 
 void SparkBase::SendCanFrame(APICommand cmd, const std::vector<uint8_t> & data) const
 {
-  if (data.size() > 8) {
-    throw std::runtime_error("CAN frame too large");
-  }
-
-  struct can_frame frame = {};
-  frame.can_id = CreateArbId(cmd) | CAN_EFF_FLAG;
-  frame.can_dlc = static_cast<uint8_t>(data.size());
-  std::memcpy(frame.data, data.data(), data.size());
-
-  constexpr std::chrono::milliseconds WAIT_TIME(1);
-  constexpr int MAX_ATTEMPTS = 50;
-
-  for (int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
-    ssize_t bytesSent = write(soc_, &frame, sizeof(frame));
-    if (bytesSent == sizeof(frame)) {
-      return;
-    }
-
-    if (bytesSent < 0 && (errno == ENOBUFS || errno == EAGAIN)) {
-      std::this_thread::sleep_for(WAIT_TIME);
-      continue;
-    }
-
-    throw std::runtime_error(
-            RED "Failed to send CAN frame: " + std::string(strerror(errno)) +
-            RESET);
-  }
-
-  throw std::runtime_error(RED "Failed to send CAN frame: Buffer consistently full." RESET);
+  SendRawFrame(CreateArbId(cmd), data);
 }
 
 void SparkBase::SendCanFrame(uint32_t arbId, const std::vector<uint8_t> & data) const
+{
+  SendRawFrame(arbId, data);
+}
+
+void SparkBase::SendRawFrame(uint32_t arbId, const std::vector<uint8_t> & data, bool rtr) const
 {
   if (data.size() > 8) {
     throw std::runtime_error("CAN frame too large");
   }
 
   struct can_frame frame = {};
-  frame.can_id = arbId | CAN_EFF_FLAG;
+  frame.can_id = arbId | CAN_EFF_FLAG | (rtr ? CAN_RTR_FLAG : 0);
   frame.can_dlc = static_cast<uint8_t>(data.size());
-  std::memcpy(frame.data, data.data(), data.size());
+  if (!data.empty()) {
+    std::memcpy(frame.data, data.data(), data.size());
+  }
 
   constexpr std::chrono::milliseconds WAIT_TIME(1);
   constexpr int MAX_ATTEMPTS = 50;
@@ -348,6 +327,37 @@ template<typename T> T SparkBase::GetPIDParam(Parameter baseParam, uint8_t slot,
 
 std::optional<std::tuple<uint8_t, uint8_t, uint8_t, uint8_t, bool>> SparkBase::ReadFirmwareVersion()
 {
+  if (protocol_ == Protocol::Spark25x) {
+    // 25.x GET_FIRMWARE_VERSION: same class 9 idx 8 arb id as the classic
+    // query, but sent as an RTR frame (the classic dlc-0 data frame returns
+    // nothing on 25.x). The dlc-8 payload signals the requested reply length;
+    // RTR frames carry no data on the wire. The response is captured by the
+    // reader thread into fw_resp_ (mirrors the param-write response slot).
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      fw_resp_.reset();
+    }
+    try {
+      SendRawFrame(
+        CreateArbId(APICommand::FirmwareVersion), std::vector<uint8_t>(8, 0x00), true);
+    } catch (const std::runtime_error & e) {
+      std::cerr << YELLOW << "Firmware version RTR query failed: " << e.what() << RESET << "\n";
+      return std::nullopt;
+    }
+    for (int elapsedMs = 0; elapsedMs < 50; elapsedMs += 5) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (fw_resp_.has_value()) {
+        const auto & d = *fw_resp_;
+        // Per the JSON spec: MAJOR uint8 @0, MINOR uint8 @8, BUILD uint16
+        // big-endian @16, DEBUG_BUILD uint8 @32. BUILD's (high, low) bytes
+        // map onto the classic tuple's (patch, build) slots.
+        return std::make_tuple(d[0], d[1], d[2], d[3], d[4] != 0);
+      }
+    }
+    return std::nullopt;
+  }
+
   struct can_frame request = {};
   uint32_t requestarbId = CreateArbId(APICommand::FirmwareVersion);
   request.can_id = requestarbId | CAN_EFF_FLAG;
@@ -462,15 +472,131 @@ void SparkBase::ReadPeriodicMessages()
         std::memcpy(&period4_.altEncoderVelocity, &velocity, 4);
         std::memcpy(&period4_.altEncoderPosition, &position, 4);
         period4_.timestamp = now;
+      } else if (protocol_ == Protocol::Spark25x) {
+        // Spark 25.x frames (class-46 status, class-14 param responses,
+        // class-9 firmware response). Classic firmware never sends these
+        // arb ids, and this branch is additionally gated on protocol_.
+        if (auto resp = spark25x::DecodeParamWriteResponse(
+            receivedArbId, response.data, response.can_dlc, deviceId_))
+        {
+          param_resp_ = *resp;
+        } else if (receivedArbId == CreateArbId(APICommand::FirmwareVersion) &&
+          response.can_dlc >= 5)
+        {
+          std::array<uint8_t, 8> payload{};
+          std::memcpy(payload.data(), response.data, response.can_dlc);
+          fw_resp_ = payload;
+        } else if (response.can_dlc == 8) {
+          // The Status decoders assume a full 8-byte payload — short frames
+          // are dropped rather than decoded against garbage.
+          if (receivedArbId == spark25x::StatusArbId(0, deviceId_)) {
+            const auto s = spark25x::DecodeStatus0(response.data);
+            // Applied output feeds the classic duty-cycle cache so
+            // GetDutyCycle() keeps working. Status 0's flag bits 48-53
+            // (limits / INVERTED / heartbeat lock) are NOT faults and are
+            // deliberately never written into the faults cache — Status 1
+            // owns period0_.faults in 25.x mode.
+            period0_.dutyCycle = s.appliedOutput;
+            period1_.voltage = s.voltage;
+            period1_.current = s.current;
+            period1_.temperature = s.tempC;
+            period0_.timestamp = now;
+            period1_.timestamp = now;
+          } else if (receivedArbId == spark25x::StatusArbId(1, deviceId_)) {
+            const auto s = spark25x::DecodeStatus1(response.data);
+            period0_.faults = s.faults;
+            period0_.stickyFaults = s.stickyFaults;
+            period0_.timestamp = now;
+          } else if (receivedArbId == spark25x::StatusArbId(2, deviceId_)) {
+            const auto s = spark25x::DecodeStatus2(response.data);
+            // Status 2 carries velocity AND position; stamp BOTH caches.
+            // period2_.timestamp is only ever set here in 25.x mode, making
+            // it the Status-2 arrival marker Status2AgeMs() relies on.
+            period1_.velocity = s.velocityRpm;
+            period2_.position = s.positionRot;
+            period1_.timestamp = now;
+            period2_.timestamp = now;
+          } else if (receivedArbId == spark25x::StatusArbId(3, deviceId_)) {
+            const auto s = spark25x::DecodeStatus3(response.data);
+            period3_.analogPosition = s.analogPosition;
+            period3_.timestamp = now;
+          }
+        }
       }
       // Note: Spark Flex sends periodic status on API class 6 (same as MAX),
-      // NOT on class 46. FlexPeriod handlers removed — class 46 frames are never sent.
+      // NOT on class 46. In Classic mode class-46 frames never appear; in
+      // Spark25x mode class 46 carries the Status frames handled above.
     }
   }
 }
 
+int64_t SparkBase::Status2AgeMs() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (period2_.timestamp == std::chrono::steady_clock::time_point{}) {
+    return std::numeric_limits<int64_t>::max();  // never received
+  }
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::steady_clock::now() - period2_.timestamp)
+         .count();
+}
+
+bool SparkBase::WriteParameterVerified(uint8_t paramId, uint32_t rawValue, int retries)
+{
+  const auto frame = spark25x::EncodeParamWrite(deviceId_, paramId, rawValue);
+  const std::vector<uint8_t> payload(frame.data.begin(), frame.data.end());
+
+  for (int attempt = 0; attempt < retries; ++attempt) {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      param_resp_.reset();
+    }
+    // The reader thread owns the socket for receives; it routes the class-14
+    // response into param_resp_. Poll that slot — never read the socket here.
+    SendRawFrame(frame.arbId, payload);
+    for (int elapsedMs = 0; elapsedMs < 50; elapsedMs += 5) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (param_resp_.has_value()) {
+        if (param_resp_->paramId == paramId && param_resp_->resultCode == 0) {
+          return true;
+        }
+        break;  // response for another param, or a nonzero result code — retry
+      }
+    }
+  }
+  return false;
+}
+
+bool SparkBase::WriteParameterVerifiedFloat(uint8_t paramId, float value, int retries)
+{
+  uint32_t raw;
+  std::memcpy(&raw, &value, sizeof(raw));
+  return WriteParameterVerified(paramId, raw, retries);
+}
+
+bool SparkBase::VerifyProtocol()
+{
+  if (protocol_ == Protocol::Spark25x) {
+    // Benign verified write: Status-2 period to its spec default (20 ms).
+    // Success proves the device answers on class 14 — i.e. it speaks 25.x.
+    return WriteParameterVerified(spark25x::kStatusPeriod2, 20);
+  }
+  // Classic: the classic firmware query answering proves classic protocol.
+  return ReadFirmwareVersion().has_value();
+}
+
 void SparkBase::Heartbeat()
 {
+  if (protocol_ == Protocol::Spark25x) {
+    // 25.x heartbeat is a broadcast (device 0) 64-bit enable bitfield. Send
+    // the all-enable mask — bench-verified; a single-bit mask would tell
+    // every OTHER device it is disabled. Multi-motor consumers should call
+    // Heartbeat() on ONE motor object per cycle.
+    const auto d = spark25x::EncodeHeartbeat(0xFFFFFFFFFFFFFFFFull);
+    SendRawFrame(spark25x::HeartbeatArbId(), std::vector<uint8_t>(d.begin(), d.end()));
+    return;
+  }
   std::vector<uint8_t> data(8, 0xFF);
   SendCanFrame(APICommand::Heartbeat, data);
 }
@@ -524,7 +650,34 @@ void SparkBase::SetDutyCycle(float dutyCycle)
 
 void SparkBase::SetVelocity(float velocity)
 {
+  if (protocol_ == Protocol::Spark25x) {
+    if (!std::isfinite(velocity)) {
+      throw std::invalid_argument(RED "Velocity must be a finite number." RESET);
+    }
+    // 25.x velocity setpoint: class 0 idx 0, float32 + arbFF + PID slot.
+    const auto d = spark25x::EncodeSetpoint(velocity, velocity_slot_);
+    SendRawFrame(
+      spark25x::MakeArbId(spark25x::kVelocityApiClass, spark25x::kVelocityApiIndex, deviceId_),
+      std::vector<uint8_t>(d.begin(), d.end()));
+    return;
+  }
   SendControlMessage(APICommand::Velocity, "Velocity", velocity);
+}
+
+void SparkBase::SetVelocitySlot(uint8_t slot)
+{
+  if (slot >= 4) {
+    throw std::out_of_range(RED "Invalid slot number. Max value is 3." RESET);
+  }
+  velocity_slot_ = slot;
+}
+
+void SparkBase::SetPositionSlot(uint8_t slot)
+{
+  if (slot >= 4) {
+    throw std::out_of_range(RED "Invalid slot number. Max value is 3." RESET);
+  }
+  position_slot_ = slot;
 }
 
 void SparkBase::SendSetpointWithCtrlType(float value, uint8_t ctrlType, uint8_t ctrlBytePos)
@@ -544,6 +697,17 @@ void SparkBase::SetSmartVelocity(float smartVelocity)
 
 void SparkBase::SetPosition(float position)
 {
+  if (protocol_ == Protocol::Spark25x) {
+    if (!std::isfinite(position)) {
+      throw std::invalid_argument(RED "Position must be a finite number." RESET);
+    }
+    // 25.x position setpoint: class 0 idx 4, float32 + arbFF + PID slot.
+    const auto d = spark25x::EncodeSetpoint(position, position_slot_);
+    SendRawFrame(
+      spark25x::MakeArbId(spark25x::kPositionApiClass, spark25x::kPositionApiIndex, deviceId_),
+      std::vector<uint8_t>(d.begin(), d.end()));
+    return;
+  }
   SendControlMessage(APICommand::Position, "Position", position);
 }
 
