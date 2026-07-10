@@ -139,3 +139,10 @@ TEST(Encode, SetpointSlotMasked) {
   EXPECT_EQ(d[6], 0x01);
   EXPECT_EQ(d[7], 0x00);
 }
+
+TEST(Encode, SetEncoderPositionZero) {
+  auto f = EncodeSetEncoderPosition(1, 0.0f);
+  EXPECT_EQ(f.arbId, 0x02052801u);
+  const uint8_t expect[5] = {0x00, 0x00, 0x00, 0x00, 0x03};
+  EXPECT_TRUE(std::equal(f.data.begin(), f.data.end(), expect));
+}

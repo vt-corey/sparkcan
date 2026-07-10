@@ -174,6 +174,15 @@ Status5 DecodeStatus5(const uint8_t * data)
     return s;
 }
 
+EncoderPositionFrame EncodeSetEncoderPosition(uint8_t deviceId, float rotations)
+{
+  EncoderPositionFrame f{};
+  f.arbId = MakeArbId(10, 0, deviceId);
+  std::memcpy(f.data.data(), &rotations, 4);
+  f.data[4] = 3;  // DATA_TYPE, fixed
+  return f;
+}
+
 uint32_t StatusArbId(uint8_t statusIdx, uint8_t deviceId)
 {
     return MakeArbId(46, statusIdx, deviceId);

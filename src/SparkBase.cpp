@@ -608,6 +608,12 @@ bool SparkBase::VerifyProtocol()
   return ReadFirmwareVersion().has_value();
 }
 
+void SparkBase::SetPrimaryEncoderPosition(float rotations)
+{
+  const auto f = spark25x::EncodeSetEncoderPosition(deviceId_, rotations);
+  SendRawFrame(f.arbId, std::vector<uint8_t>(f.data.begin(), f.data.end()));
+}
+
 void SparkBase::Heartbeat()
 {
   if (protocol_ == Protocol::Spark25x) {

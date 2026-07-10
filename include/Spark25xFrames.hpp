@@ -47,6 +47,11 @@ Status2 DecodeStatus2(const uint8_t * data);
 Status3 DecodeStatus3(const uint8_t * data);
 Status5 DecodeStatus5(const uint8_t * data);
 
+// SET_PRIMARY_ENCODER_POSITION (class 10 idx 0): float32 position @0 +
+// data-type byte (always 3) @32. Present since firmware 1.0.0 (both protocols).
+struct EncoderPositionFrame { uint32_t arbId; std::array<uint8_t, 5> data; };
+EncoderPositionFrame EncodeSetEncoderPosition(uint8_t deviceId, float rotations);
+
 // Class-46 status arb ids: class 46, idx = status number.
 uint32_t StatusArbId(uint8_t statusIdx, uint8_t deviceId);
 

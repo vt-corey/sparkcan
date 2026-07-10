@@ -654,6 +654,13 @@ public:
   void Heartbeat();
 
   /**
+   * Set the primary encoder's position register (e.g. zero it). Works on
+   * both protocols (frame present since firmware 1.0.0). Position units are
+   * raw rotations when the position conversion factor is 1.
+   */
+  void SetPrimaryEncoderPosition(float rotations);
+
+  /**
    * @brief Resets all faults on the SPARK controller
    */
   void ResetFaults();
