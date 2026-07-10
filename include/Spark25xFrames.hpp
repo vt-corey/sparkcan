@@ -54,6 +54,7 @@ uint32_t StatusArbId(uint8_t statusIdx, uint8_t deviceId);
 enum Param25x : uint8_t {
   kP0 = 13, kI0 = 14, kD0 = 15, kF0 = 16, kOutMin0 = 19, kOutMax0 = 20,
   kP1 = 21, kI1 = 22, kD1 = 23, kF1 = 24, kOutMin1 = 27, kOutMax1 = 28,
+  kPositionConversionFactor = 112, kVelocityConversionFactor = 113,
   kStatusPeriod2 = 160, kStatusPeriod3 = 161, kStatusPeriod5 = 163,
   kForceEnableStatus2 = 188, kForceEnableStatus3 = 189, kForceEnableStatus5 = 191,
 };
