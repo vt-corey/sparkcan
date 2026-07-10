@@ -325,7 +325,7 @@ template<typename T> T SparkBase::GetPIDParam(Parameter baseParam, uint8_t slot,
   return GetParamAs<T>(static_cast<Parameter>(static_cast<int>(baseParam) + slot), name);
 }
 
-std::optional<std::tuple<uint8_t, uint8_t, uint8_t, uint8_t, bool>> SparkBase::ReadFirmwareVersion()
+std::optional<std::tuple<uint8_t, uint8_t, uint16_t, bool>> SparkBase::ReadFirmwareVersion()
 {
   // Both protocols route the response through the reader thread (which owns
   // the socket) into fw_resp_ — the query never reads the socket inline, so
@@ -356,11 +356,14 @@ std::optional<std::tuple<uint8_t, uint8_t, uint8_t, uint8_t, bool>> SparkBase::R
       std::lock_guard<std::mutex> lock(mutex_);
       if (fw_resp_.has_value()) {
         const auto & d = *fw_resp_;
-        // Classic response: major @0, minor @1, patch @2, build @3, debug @4.
-        // 25.x per the JSON spec: MAJOR uint8 @0, MINOR uint8 @8, BUILD
-        // uint16 big-endian @16, DEBUG_BUILD uint8 @32 — BUILD's (high, low)
-        // bytes map onto the classic tuple's (patch, build) slots.
-        return std::make_tuple(d[0], d[1], d[2], d[3], d[4] != 0);
+        // Layout per the JSON spec (GET_FIRMWARE_VERSION): MAJOR uint8 @0,
+        // MINOR uint8 @8, BUILD uint16 BIG-ENDIAN @16 (isBigEndian true —
+        // byte 2 is the high byte), DEBUG_BUILD uint8 @32. Versions read as
+        // major.minor.build: 26.1.5 firmware returns (26, 1, 5).
+        return std::make_tuple(
+          d[0], d[1],
+          static_cast<uint16_t>((static_cast<uint16_t>(d[2]) << 8) | d[3]),
+          d[4] != 0);
       }
     }
     if (elapsedMs >= 50) {
@@ -501,6 +504,14 @@ void SparkBase::ReadPeriodicMessages()
             const auto s = spark25x::DecodeStatus3(response.data);
             period3_.analogPosition = s.analogPosition;
             period3_.timestamp = now;
+          } else if (receivedArbId == spark25x::StatusArbId(5, deviceId_)) {
+            // Status 5: duty-cycle absolute encoder (velocity @0,
+            // position @32) — dedicated cache, read by
+            // GetAbsoluteEncoder{Position,Velocity}() / Status5AgeMs().
+            const auto s = spark25x::DecodeStatus5(response.data);
+            status5_.velocity = s.velocityRpm;
+            status5_.position = s.positionRot;
+            status5_.timestamp = now;
           }
         }
       }
@@ -530,6 +541,11 @@ int64_t SparkBase::Status2AgeMs() const
 int64_t SparkBase::Status3AgeMs() const
 {
   return age_ms(period3_.timestamp);
+}
+
+int64_t SparkBase::Status5AgeMs() const
+{
+  return age_ms(status5_.timestamp);
 }
 
 bool SparkBase::WriteParameterVerified(
@@ -879,6 +895,19 @@ float SparkBase::GetAltEncoderPosition() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return period4_.altEncoderPosition;
+}
+
+// Status 5 (Spark 25.x duty-cycle absolute encoder)
+float SparkBase::GetAbsoluteEncoderVelocity() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return status5_.velocity;
+}
+
+float SparkBase::GetAbsoluteEncoderPosition() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return status5_.position;
 }
 
 // Parameter Setters //

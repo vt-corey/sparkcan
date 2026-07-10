@@ -37,10 +37,15 @@ struct Status0 { float appliedOutput; float voltage; float current; float tempC;
 struct Status1 { uint16_t faults; uint16_t stickyFaults; };  // bit ranges per spec
 struct Status2 { float velocityRpm; float positionRot; };
 struct Status3 { float analogPosition; };  // float @32, 0-1 per rev
+// Status 5: duty-cycle absolute encoder (data port). VELOCITY float32 @0,
+// POSITION float32 @32 (0-1 per revolution) — bench-verified 2026-07-10;
+// community notes list these reversed.
+struct Status5 { float velocityRpm; float positionRot; };
 Status0 DecodeStatus0(const uint8_t * data);
 Status1 DecodeStatus1(const uint8_t * data);
 Status2 DecodeStatus2(const uint8_t * data);
 Status3 DecodeStatus3(const uint8_t * data);
+Status5 DecodeStatus5(const uint8_t * data);
 
 // Class-46 status arb ids: class 46, idx = status number.
 uint32_t StatusArbId(uint8_t statusIdx, uint8_t deviceId);
@@ -49,8 +54,8 @@ uint32_t StatusArbId(uint8_t statusIdx, uint8_t deviceId);
 enum Param25x : uint8_t {
   kP0 = 13, kI0 = 14, kD0 = 15, kF0 = 16, kOutMin0 = 19, kOutMax0 = 20,
   kP1 = 21, kI1 = 22, kD1 = 23, kF1 = 24, kOutMin1 = 27, kOutMax1 = 28,
-  kStatusPeriod2 = 160, kStatusPeriod3 = 161,
-  kForceEnableStatus2 = 188, kForceEnableStatus3 = 189,
+  kStatusPeriod2 = 160, kStatusPeriod3 = 161, kStatusPeriod5 = 163,
+  kForceEnableStatus2 = 188, kForceEnableStatus3 = 189, kForceEnableStatus5 = 191,
 };
 }  // namespace spark25x
 #endif

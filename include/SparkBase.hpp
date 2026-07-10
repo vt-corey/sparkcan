@@ -372,6 +372,15 @@ private:
   Period3Status period3_{};
   Period4Status period4_{};
 
+  /// Duty-cycle absolute encoder cache (Spark 25.x Status 5: velocity float32
+  /// @0, position float32 @32). Guarded by mutex_ like the period caches.
+  struct Status5Cache
+  {
+    float position;
+    float velocity;
+    std::chrono::steady_clock::time_point timestamp;
+  } status5_{};
+
   /// PID slot used by SetVelocity in Spark25x mode (25.x setpoint frames carry the slot)
   uint8_t velocity_slot_ = 0;
   /// PID slot used by SetPosition in Spark25x mode
@@ -561,16 +570,17 @@ public:
    * Classic: dlc-0 data-frame query. Spark25x: the same class 9 idx 8 arb id
    * sent as an RTR frame. In BOTH modes the response is captured by the
    * reader thread (which owns the socket) into a pending slot polled here —
-   * never read inline, so the query cannot race the reader thread. In
-   * Spark25x mode the spec's 16-bit big-endian BUILD field is split across
-   * the (patch, build) tuple slots as (high byte, low byte).
+   * never read inline, so the query cannot race the reader thread. The BUILD
+   * field is a 16-bit BIG-ENDIAN value at bytes 2-3 (isBigEndian per the
+   * JSON spec's GET_FIRMWARE_VERSION signals); firmware versions read as
+   * major.minor.build, so 26.1.5 firmware returns (26, 1, 5).
    *
    * Blocks up to ~50 ms waiting for the response. NOT safe for concurrent
    * calls on the same object (single pending-response slot).
    *
-   * @return A tuple of (major, minor, patch, build, isDebugBuild), or std::nullopt on failure
+   * @return A tuple of (major, minor, build, isDebugBuild), or std::nullopt on failure
    */
-  std::optional<std::tuple<uint8_t, uint8_t, uint8_t, uint8_t, bool>> ReadFirmwareVersion();
+  std::optional<std::tuple<uint8_t, uint8_t, uint16_t, bool>> ReadFirmwareVersion();
 
   /**
    * @brief Verifies the configured protocol matches the device's firmware
@@ -891,6 +901,18 @@ public:
   int64_t Status3AgeMs() const;
 
   /**
+   * @brief Milliseconds since the last Status-5 (duty-cycle absolute encoder)
+   * frame arrived
+   *
+   * Spark25x mode only: stamped by the class-46 Status-5 handler. Lets
+   * consumers wait for or detect a stopped Status-5 stream (e.g.
+   * absolute-encoder steer seeding).
+   *
+   * @return int64_t Age in ms, or INT64_MAX if no frame has ever arrived
+   */
+  int64_t Status5AgeMs() const;
+
+  /**
    * @brief Gets the current analog voltage
    * @return float The analog voltage in volts
    */
@@ -919,6 +941,18 @@ public:
    * @return float The alternate encoder position in ticks
    */
   float GetAltEncoderPosition() const;
+
+  /**
+   * @brief Gets the duty-cycle absolute encoder position (Spark 25.x Status 5)
+   * @return float The absolute position in rotations (0-1 per revolution by default)
+   */
+  float GetAbsoluteEncoderPosition() const;
+
+  /**
+   * @brief Gets the duty-cycle absolute encoder velocity (Spark 25.x Status 5)
+   * @return float The absolute encoder velocity (RPM by default)
+   */
+  float GetAbsoluteEncoderVelocity() const;
 
   // Parameter Setters //
 

@@ -99,6 +99,21 @@ TEST(Decode, Status3FloatAtByte4) {
   EXPECT_FLOAT_EQ(s.analogPosition, 0.25f);
 }
 
+TEST(Decode, Status5PositionAtByte4) {
+  // STATUS_5 (duty-cycle absolute encoder): DUTY_CYCLE_ENCODER_VELOCITY
+  // float32 @ bit 0, DUTY_CYCLE_ENCODER_POSITION float32 @ bit 32 (byte 4).
+  // Community notes list these reversed — the JSON spec and the bench agree
+  // on velocity-first. Bytes 0-3 are nonzero garbage to prove the position
+  // decode reads at byte 4, not byte 0.
+  const uint8_t d[8] = {0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x00, 0x80, 0x3E};
+  auto s = DecodeStatus5(d);
+  EXPECT_FLOAT_EQ(s.positionRot, 0.25f);
+  // And the velocity really comes from bytes 0-3 (the "garbage" float).
+  float garbage;
+  std::memcpy(&garbage, d, sizeof(garbage));
+  EXPECT_FLOAT_EQ(s.velocityRpm, garbage);
+}
+
 TEST(Encode, HeartbeatSingleDeviceBit) {
   // Bit 8 of the LE uint64 bitfield lands in byte 1 only.
   auto d = EncodeHeartbeat(1ull << 8);

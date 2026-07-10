@@ -162,6 +162,18 @@ Status3 DecodeStatus3(const uint8_t * data)
     return s;
 }
 
+// STATUS_5 (JSON spec): DUTY_CYCLE_ENCODER_VELOCITY float32 @0 (RPM),
+// DUTY_CYCLE_ENCODER_POSITION float32 @32 (rotations, 0-1 per revolution).
+// Bench-verified 2026-07-10 — community notes list velocity/position
+// reversed; the JSON spec (and the bench) have velocity first.
+Status5 DecodeStatus5(const uint8_t * data)
+{
+    Status5 s;
+    s.velocityRpm = FloatAt(data, 0);
+    s.positionRot = FloatAt(data, 4);
+    return s;
+}
+
 uint32_t StatusArbId(uint8_t statusIdx, uint8_t deviceId)
 {
     return MakeArbId(46, statusIdx, deviceId);
