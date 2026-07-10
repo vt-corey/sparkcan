@@ -406,6 +406,17 @@ private:
   void SendRawFrame(uint32_t arbId, const std::vector<uint8_t> & data, bool rtr = false) const;
 
   /**
+   * @brief Milliseconds since the given status timestamp was stamped
+   *
+   * Shared implementation behind Status2AgeMs/Status3AgeMs. Takes the
+   * period cache's timestamp member by reference and reads it under mutex_.
+   *
+   * @param timestamp The period cache timestamp member to age
+   * @return int64_t Age in ms, or INT64_MAX if never stamped
+   */
+  int64_t age_ms(const std::chrono::steady_clock::time_point & timestamp) const;
+
+  /**
    * @brief Sends a control message to the SPARK controller
    *
    * @param cmd The API command associated with the control message
@@ -589,9 +600,10 @@ public:
    * @param retries Number of send attempts before giving up
    * @param lastResultCode Optional out-param: set to the result code of the
    * last response received for this parameter id (0 = accepted, nonzero =
-   * rejected by firmware). Left untouched if no response ever arrived (pure
-   * timeout) — initialize it to a sentinel to distinguish rejection from
-   * silence.
+   * rejected by firmware). Left untouched if no response FOR THIS PARAMETER
+   * ever arrived — a pure timeout, or a response for a mismatched parameter
+   * id, leaves it unset — so initialize it to a sentinel to distinguish
+   * rejection from silence.
    * @return bool True on verified success
    */
   bool WriteParameterVerified(
@@ -608,7 +620,8 @@ public:
    * @param value The float value to write
    * @param retries Number of send attempts before giving up
    * @param lastResultCode Optional out-param: last response's result code;
-   * left untouched on pure timeout (see WriteParameterVerified)
+   * left untouched when no response for this parameter arrived (see
+   * WriteParameterVerified)
    * @return bool True on verified success
    */
   bool WriteParameterVerifiedFloat(

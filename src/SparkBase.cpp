@@ -511,26 +511,25 @@ void SparkBase::ReadPeriodicMessages()
   }
 }
 
-int64_t SparkBase::Status2AgeMs() const
+int64_t SparkBase::age_ms(const std::chrono::steady_clock::time_point & timestamp) const
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (period2_.timestamp == std::chrono::steady_clock::time_point{}) {
+  if (timestamp == std::chrono::steady_clock::time_point{}) {
     return std::numeric_limits<int64_t>::max();  // never received
   }
   return std::chrono::duration_cast<std::chrono::milliseconds>(
-    std::chrono::steady_clock::now() - period2_.timestamp)
+    std::chrono::steady_clock::now() - timestamp)
          .count();
+}
+
+int64_t SparkBase::Status2AgeMs() const
+{
+  return age_ms(period2_.timestamp);
 }
 
 int64_t SparkBase::Status3AgeMs() const
 {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (period3_.timestamp == std::chrono::steady_clock::time_point{}) {
-    return std::numeric_limits<int64_t>::max();  // never received
-  }
-  return std::chrono::duration_cast<std::chrono::milliseconds>(
-    std::chrono::steady_clock::now() - period3_.timestamp)
-         .count();
+  return age_ms(period3_.timestamp);
 }
 
 bool SparkBase::WriteParameterVerified(
