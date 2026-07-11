@@ -146,3 +146,10 @@ TEST(Encode, SetEncoderPositionZero) {
   const uint8_t expect[5] = {0x00, 0x00, 0x00, 0x00, 0x03};
   EXPECT_TRUE(std::equal(f.data.begin(), f.data.end(), expect));
 }
+
+TEST(Decode, Status4Shape) {
+  const uint8_t d[8] = {0x00, 0x00, 0x80, 0x3F, 0x00, 0x00, 0x00, 0x3F};  // vel=1.0, pos=0.5
+  auto s = DecodeStatus4(d);
+  EXPECT_FLOAT_EQ(s.velocity, 1.0f);
+  EXPECT_FLOAT_EQ(s.position, 0.5f);
+}

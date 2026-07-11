@@ -504,6 +504,12 @@ void SparkBase::ReadPeriodicMessages()
             const auto s = spark25x::DecodeStatus3(response.data);
             period3_.analogPosition = s.analogPosition;
             period3_.timestamp = now;
+          } else if (receivedArbId == spark25x::StatusArbId(4, deviceId_)) {
+            // Alt/external encoder (loop feedback when closed-loop sensor = ALT).
+            const auto s4 = spark25x::DecodeStatus4(response.data);
+            period4_.altEncoderVelocity = s4.velocity;
+            period4_.altEncoderPosition = s4.position;
+            period4_.timestamp = now;
           } else if (receivedArbId == spark25x::StatusArbId(5, deviceId_)) {
             // Status 5: duty-cycle absolute encoder (velocity @0,
             // position @32) — dedicated cache, read by
@@ -541,6 +547,11 @@ int64_t SparkBase::Status2AgeMs() const
 int64_t SparkBase::Status3AgeMs() const
 {
   return age_ms(period3_.timestamp);
+}
+
+int64_t SparkBase::Status4AgeMs() const
+{
+  return age_ms(period4_.timestamp);
 }
 
 int64_t SparkBase::Status5AgeMs() const

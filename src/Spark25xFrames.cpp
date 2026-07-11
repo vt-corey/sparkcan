@@ -174,6 +174,16 @@ Status5 DecodeStatus5(const uint8_t * data)
     return s;
 }
 
+Status4 DecodeStatus4(const uint8_t * data)
+{
+  // STATUS_4 (class 46 idx 4): EXTERNAL_OR_ALT_ENCODER_VELOCITY float @0,
+  // EXTERNAL_OR_ALT_ENCODER_POSITION float @32.
+  Status4 s{};
+  std::memcpy(&s.velocity, data, 4);
+  std::memcpy(&s.position, data + 4, 4);
+  return s;
+}
+
 EncoderPositionFrame EncodeSetEncoderPosition(uint8_t deviceId, float rotations)
 {
   EncoderPositionFrame f{};

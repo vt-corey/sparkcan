@@ -917,6 +917,7 @@ public:
    *
    * @return int64_t Age in ms, or INT64_MAX if no frame has ever arrived
    */
+  int64_t Status4AgeMs() const;
   int64_t Status5AgeMs() const;
 
   /**
